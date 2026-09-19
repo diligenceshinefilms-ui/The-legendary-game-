@@ -1,0 +1,37 @@
+<resources>
+    <string name="app_name">Legend Racer</string>
+    <string name="app_tagline">RIDE FAST. BECOME A LEGEND.</string>
+    <string name="menu_play">RACE NOW</string>
+    <string name="menu_garage">GARAGE</string>
+    <string name="menu_championship">CHAMPIONSHIP</string>
+    <string name="menu_time_trial">TIME TRIAL</string>
+    <string name="menu_practice">PRACTICE</string>
+    <string name="menu_leaderboard">LEADERBOARD</string>
+    <string name="menu_achievements">ACHIEVEMENTS</string>
+    <string name="menu_profile">PROFILE</string>
+    <string name="menu_settings">SETTINGS</string>
+    <string name="menu_daily_challenge">DAILY CHALLENGE</string>
+    <string name="menu_multiplayer">MULTIPLAYER</string>
+    <string name="quick_race">Quick Race</string>
+    <string name="select_bike">Select Motorcycle</string>
+    <string name="select_track">Select Track</string>
+    <string name="start_race">START RACE</string>
+    <string name="pause">Pause</string>
+    <string name="resume">Resume</string>
+    <string name="restart">Restart</string>
+    <string name="quit">Quit</string>
+    <string name="race_results">Race Results</string>
+    <string name="position">Position</string>
+    <string name="lap">Lap</string>
+    <string name="speed">Speed</string>
+    <string name="nitro">NITRO</string>
+    <string name="coins">Coins</string>
+    <string name="xp">XP</string>
+    <string name="level">Level</string>
+    <string name="upgrade">Upgrade</string>
+    <string name="guest_mode">Guest Racer</string>
+    <string name="login">Login</string>
+    <string name="register">Register</string>
+    <string name="logout">Logout</string>
+    <string name="sync_status">Cloud Sync</string>
+</resources>

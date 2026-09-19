@@ -1,0 +1,6 @@
+{
+  "name": "Legend Racer",
+  "description": "High-octane arcade motorcycle racing game with career progression, garage upgrades, dynamic tracks, championship, time trials, offline-first Room persistence, and Supabase backend architecture.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
