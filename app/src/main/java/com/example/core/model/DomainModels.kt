@@ -92,6 +92,23 @@ data class EffectiveBikeStats(
     val upgradeLevels: PlayerBike
 )
 
+enum class VinylAccentStyle(val title: String, val description: String) {
+    CYBER_FLAMES("Cyber Flames", "Dynamic jagged glowing flame tongues licking across tank and fairings"),
+    NEON_CIRCUIT("Neon Circuit", "Cybernetic logic pathways and glowing PCB nodes along the body"),
+    APEX_STRIPES("Apex Stripes", "Dual aerodynamic racing stripes with high-contrast pinstripe borders"),
+    TOKYO_DRIFT("Tokyo Drift", "Aggressive angular geometric slashes and razor-sharp accents"),
+    STEALTH_CLEAN("Stealth Clean", "Minimalist carbon-fiber weave with subtle metallic pinlining")
+}
+
+data class PlayerLivery(
+    val primaryColorHex: Long = 0xFF00F0FF,
+    val secondaryColorHex: Long = 0xFFFF1B7A,
+    val underglowColorHex: Long = 0xFF00F0FF,
+    val racingNumber: String = "46",
+    val vinylAccentStyle: VinylAccentStyle = VinylAccentStyle.CYBER_FLAMES,
+    val rimTapeColorHex: Long = 0xFF00F0FF
+)
+
 data class Track(
     val id: String,
     val name: String,
@@ -212,6 +229,10 @@ data class RacerState(
     val finishedTimeMs: Long? = null,
     val primaryColorHex: Long = 0xFF00F0FF,
     val secondaryColorHex: Long = 0xFFFF6B00,
+    val underglowColorHex: Long = 0xFF00F0FF,
+    val racingNumber: String = "46",
+    val vinylAccentStyle: String = "CYBER_FLAMES",
+    val rimTapeColorHex: Long = 0xFF00F0FF,
     val bikeName: String = "Legend X1",
     val pitchAngleRad: Float = 0f,
     val throttleRatio: Float = 0f,
@@ -253,5 +274,6 @@ data class HighwayObstacle(
     val isHit: Boolean = false,
     val trainProgress: Float = 0f, // 0.0 to 1.0 crossing animation progress
     val isHonked: Boolean = false, // When player honks, car shifts lane
-    val vehicleSubModel: Int = 0   // Style variation (e.g. Scooter vs Cafe, Pickup vs Auto)
+    val vehicleSubModel: Int = 0,  // Style variation (e.g. Scooter vs Cafe, Pickup vs Auto)
+    val isOncoming: Boolean = false // True if vehicle travels from opposite direction towards the player
 )

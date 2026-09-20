@@ -1,5 +1,7 @@
 package com.example.game.renderer
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
@@ -41,7 +43,13 @@ enum class ParticleVisualType {
     COMBO_STAR,
     SMOKE_PUFF,
     DEBRIS_CHUNK,
-    SHOCKWAVE_RING
+    SHOCKWAVE_RING,
+    ELECTRIC_ARC,
+    KNEE_SPARK,
+    ROOSTER_TAIL,
+    HEAT_DISTORTION,
+    ROADSIDE_DUST,
+    ROADSIDE_DEBRIS
 }
 
 @Composable
@@ -52,9 +60,18 @@ fun GameCanvasRenderer(
     nearMissBonus: String? = null,
     nearMissCombo: Int = 0,
     isFirstPersonCam: Boolean = false,
+    isDrafting: Boolean = false,
+    draftIntensity: Float = 0f,
     modifier: Modifier = Modifier
 ) {
     val player = racers.firstOrNull { it.isPlayer } ?: racers.firstOrNull()
+
+    val isNitroActive = player?.isNitroActive == true
+    val animatedNitroWarp by animateFloatAsState(
+        targetValue = if (isNitroActive) 1f else 0f,
+        animationSpec = tween(durationMillis = 260),
+        label = "nitroWarp"
+    )
 
     // Smooth continuous animation ticker for road scrolling, scenery, and parallax
     var roadScrollAccumulator by remember { mutableFloatStateOf(0f) }
@@ -72,6 +89,8 @@ fun GameCanvasRenderer(
 
     val currentRacers by rememberUpdatedState(racers)
     val currentObstacles by rememberUpdatedState(obstacles)
+    val currentIsDrafting by rememberUpdatedState(isDrafting)
+    val currentDraftIntensity by rememberUpdatedState(draftIntensity)
 
     // 1. Particle Simulation Tick & Continuous Animation Loop (60 FPS)
     LaunchedEffect(Unit) {
@@ -87,6 +106,184 @@ fun GameCanvasRenderer(
                     continuousDistance += distanceStep
                     roadScrollAccumulator = (roadScrollAccumulator + (speed * 4.2f * dt)) % 1000f
                     engineRumbleTimer = (engineRumbleTimer + dt * (speed / 15f)) % (2 * PI.toFloat())
+                }
+
+                // Dynamic Slipstream Aerodynamic Wind Streaks
+                if (currentIsDrafting && speed > 50f && (now - lastSlipstreamSpawnTime) > 65_000_000L) {
+                    lastSlipstreamSpawnTime = now
+                    val streakColors = listOf(Color(0xFF00E5FF), Color(0xFFD500F9), Color(0xFFFFFFFF), Color(0xFF00B0FF))
+                    val intensity = currentDraftIntensity.coerceIn(0.2f, 1.0f)
+                    for (flank in listOf(-1f, 1f)) {
+                        particles.add(
+                            VisualCanvasParticle(
+                                x = flank * (18f + Random.nextFloat() * 14f),
+                                y = -20f - (Random.nextFloat() * 40f),
+                                vx = flank * (Random.nextFloat() * 12f),
+                                vy = -(speed * 2.5f + 320f),
+                                color = streakColors[Random.nextInt(streakColors.size)].copy(alpha = 0.85f * intensity),
+                                maxLife = 0.38f,
+                                currentLife = 0.38f,
+                                size = (3.5f * intensity).coerceIn(2.5f, 6.5f),
+                                type = ParticleVisualType.SLIPSTREAM_STREAK
+                            )
+                        )
+                    }
+                }
+
+                // Dynamic Knee-Slider Titanium Sparks when banking deeply into highway corners
+                if (currentPlayer != null && abs(currentPlayer.leanAngleRad) > 0.16f && speed > 55f) {
+                    val side = if (currentPlayer.leanAngleRad > 0f) 1f else -1f
+                    val leanSeverity = (abs(currentPlayer.leanAngleRad) - 0.16f) / 0.35f
+                    val sparkCount = if (leanSeverity > 0.5f) 3 else 1
+                    val sparkColors = listOf(Color(0xFFFFD600), Color(0xFFFF6D00), Color(0xFFFFFFFF), Color(0xFFFF9100))
+                    for (i in 0 until sparkCount) {
+                        particles.add(
+                            VisualCanvasParticle(
+                                x = (side * 28f) + (Random.nextFloat() - 0.5f) * 10f,
+                                y = 28f + (Random.nextFloat() * 8f),
+                                vx = side * (Random.nextFloat() * 120f + 50f) + (Random.nextFloat() - 0.5f) * 60f,
+                                vy = -(speed * 1.8f + Random.nextFloat() * 140f + 160f),
+                                color = sparkColors[Random.nextInt(sparkColors.size)],
+                                maxLife = 0.28f,
+                                currentLife = 0.28f,
+                                size = Random.nextFloat() * 3.5f + 2.0f,
+                                type = ParticleVisualType.KNEE_SPARK
+                            )
+                        )
+                    }
+                }
+
+                // Wet Road Rooster-Tail Water Mist Spray flung by rear tire
+                if (speed > 55f && Random.nextFloat() < 0.65f) {
+                    val sprayAlpha = (speed / 280f).coerceIn(0.2f, 0.75f)
+                    val sprayColor = if (Random.nextBoolean()) Color(0x9900F0FF) else Color(0x88CFD8DC)
+                    particles.add(
+                        VisualCanvasParticle(
+                            x = (Random.nextFloat() - 0.5f) * 14f,
+                            y = 35f + Random.nextFloat() * 8f,
+                            vx = (Random.nextFloat() - 0.5f) * 45f,
+                            vy = (speed * 1.6f + 180f),
+                            color = sprayColor.copy(alpha = sprayAlpha),
+                            maxLife = 0.32f,
+                            currentLife = 0.32f,
+                            size = Random.nextFloat() * 8f + 5f,
+                            type = ParticleVisualType.ROOSTER_TAIL
+                        )
+                    )
+                }
+
+                // TURBINA Electric Arc & Hyper-Speed High-Voltage Discharges
+                val isTurbinaBike = currentPlayer?.bikeName?.contains("turbina", ignoreCase = true) == true || isNitroActive
+                if (isTurbinaBike && (isNitroActive || speed > 220f) && Random.nextFloat() < 0.45f) {
+                    val arcColors = listOf(Color(0xFF00F0FF), Color(0xFFFFD600), Color(0xFF76FF03), Color(0xFFFFFFFF))
+                    val arcX = (Random.nextFloat() - 0.5f) * 55f
+                    val arcY = (Random.nextFloat() - 0.5f) * 45f
+                    particles.add(
+                        VisualCanvasParticle(
+                            x = arcX,
+                            y = arcY,
+                            vx = (Random.nextFloat() - 0.5f) * 160f,
+                            vy = (Random.nextFloat() - 0.5f) * 160f,
+                            color = arcColors[Random.nextInt(arcColors.size)],
+                            maxLife = 0.16f,
+                            currentLife = 0.16f,
+                            size = Random.nextFloat() * 3.5f + 2f,
+                            type = ParticleVisualType.ELECTRIC_ARC
+                        )
+                    )
+                }
+
+                // Heat Distortion Waves Rising from Exhaust / Turbine Radiators
+                if (speed > 100f && Random.nextFloat() < 0.35f) {
+                    particles.add(
+                        VisualCanvasParticle(
+                            x = (Random.nextFloat() - 0.5f) * 28f,
+                            y = 12f + (Random.nextFloat() * 15f),
+                            vx = (Random.nextFloat() - 0.5f) * 20f,
+                            vy = -95f,
+                            color = Color.White.copy(alpha = 0.18f),
+                            maxLife = 0.40f,
+                            currentLife = 0.40f,
+                            size = Random.nextFloat() * 16f + 12f,
+                            type = ParticleVisualType.HEAT_DISTORTION
+                        )
+                    )
+                }
+
+                // Dynamic Environment Spawn: Roadside Verge Dust & Aerodynamic Wake Vortices
+                if (speed > 45f && Random.nextFloat() < 0.40f) {
+                    val roadVergeSide = if (Random.nextBoolean()) 1f else -1f
+                    val vergeX = roadVergeSide * (95f + Random.nextFloat() * 75f)
+                    val dustColors = listOf(
+                        Color(0xFFBCAAA4), // Warm sand/gravel dust
+                        Color(0xFFA1887F), // Earth roadside loam
+                        Color(0xFF8D6E63), // Dark asphalt dust
+                        Color(0xFFD7CCC8), // Light clay dust
+                        Color(0xFFCFD8DC)  // Ambient road haze
+                    )
+                    val dustColor = dustColors[Random.nextInt(dustColors.size)]
+                    val dustAlpha = (0.22f + (speed / 300f) * 0.28f).coerceIn(0.18f, 0.48f)
+
+                    particles.add(
+                        VisualCanvasParticle(
+                            x = vergeX,
+                            y = (Random.nextFloat() - 0.5f) * 60f + 10f,
+                            vx = roadVergeSide * (Random.nextFloat() * 45f + 15f),
+                            vy = -(speed * 0.9f + Random.nextFloat() * 60f + 50f),
+                            color = dustColor.copy(alpha = dustAlpha),
+                            maxLife = Random.nextFloat() * 0.45f + 0.35f,
+                            currentLife = 0.45f,
+                            size = Random.nextFloat() * 14f + 8f,
+                            type = ParticleVisualType.ROADSIDE_DUST,
+                            rotationSpeed = (Random.nextFloat() - 0.5f) * 4f
+                        )
+                    )
+                }
+
+                // Dynamic Environment Spawn: Roadside Curb & Gravel Shoulder Debris when Riding Near Edges
+                if (currentPlayer != null && abs(currentPlayer.posX) > 0.35f && speed > 50f && Random.nextFloat() < 0.55f) {
+                    val edgeSide = if (currentPlayer.posX > 0f) 1f else -1f
+                    val debrisColors = listOf(
+                        Color(0xFF424242), // Asphalt chunk
+                        Color(0xFF616161), // Gravel pebble
+                        Color(0xFF795548), // Roadside stone
+                        Color(0xFF8D6E63), // Sandstone fragment
+                        Color(0xFF37474F)  // Dark tire rubber crumb
+                    )
+                    val debrisColor = debrisColors[Random.nextInt(debrisColors.size)]
+                    val pebbleX = (edgeSide * 38f) + (Random.nextFloat() - 0.5f) * 16f
+
+                    // Spawn tumbling debris fragment
+                    particles.add(
+                        VisualCanvasParticle(
+                            x = pebbleX,
+                            y = 30f + (Random.nextFloat() * 12f),
+                            vx = edgeSide * (Random.nextFloat() * 90f + 40f) + (Random.nextFloat() - 0.5f) * 30f,
+                            vy = (speed * 1.5f + Random.nextFloat() * 160f + 200f),
+                            color = debrisColor,
+                            maxLife = Random.nextFloat() * 0.38f + 0.25f,
+                            currentLife = 0.38f,
+                            size = Random.nextFloat() * 4.5f + 2.5f,
+                            type = ParticleVisualType.ROADSIDE_DEBRIS,
+                            rotationSpeed = (Random.nextFloat() - 0.5f) * 22f
+                        )
+                    )
+
+                    // Companion shoulder dust puff
+                    particles.add(
+                        VisualCanvasParticle(
+                            x = pebbleX,
+                            y = 28f + (Random.nextFloat() * 8f),
+                            vx = edgeSide * (Random.nextFloat() * 35f + 15f),
+                            vy = -(speed * 0.6f + 80f),
+                            color = Color(0xFFA1887F).copy(alpha = 0.32f),
+                            maxLife = 0.35f,
+                            currentLife = 0.35f,
+                            size = Random.nextFloat() * 16f + 10f,
+                            type = ParticleVisualType.ROADSIDE_DUST,
+                            rotationSpeed = (Random.nextFloat() - 0.5f) * 3f
+                        )
+                    )
                 }
 
                 // Update active particles with physical dynamics
@@ -108,6 +305,33 @@ fun GameCanvasRenderer(
                             ParticleVisualType.SPARK -> {
                                 p.vy += 850f * dt // Gravity
                                 p.vx *= (1f - dt * 2.5f) // Aerodynamic air drag
+                            }
+                            ParticleVisualType.KNEE_SPARK -> {
+                                p.vy += 700f * dt
+                                p.vx *= (1f - dt * 3.5f)
+                                p.size *= (1f - dt * 1.5f)
+                            }
+                            ParticleVisualType.ROOSTER_TAIL -> {
+                                p.size += 30f * dt
+                                p.vx *= (1f + dt * 1.2f)
+                            }
+                            ParticleVisualType.ELECTRIC_ARC -> {
+                                p.vx += (Random.nextFloat() - 0.5f) * 400f * dt
+                                p.vy += (Random.nextFloat() - 0.5f) * 400f * dt
+                            }
+                            ParticleVisualType.HEAT_DISTORTION -> {
+                                p.vy -= 110f * dt
+                                p.size += 24f * dt
+                            }
+                            ParticleVisualType.ROADSIDE_DUST -> {
+                                p.vy -= (speed * 0.35f + 20f) * dt // Perspective drift
+                                p.vx += sin(now * 0.00000003f + p.y * 0.1f) * 30f * dt // Turbulent atmospheric swirl
+                                p.size += 28f * dt // Expanding dissipation
+                            }
+                            ParticleVisualType.ROADSIDE_DEBRIS -> {
+                                p.vy += 750f * dt // Gravity / aerodynamic throw
+                                p.vx *= (1f - dt * 1.6f)
+                                p.size *= (1f - dt * 0.3f)
                             }
                             ParticleVisualType.DEBRIS_CHUNK -> {
                                 p.vy += 650f * dt
@@ -260,6 +484,9 @@ fun GameCanvasRenderer(
         val roadCurvature = CityMilestoneCatalog.getRoadCurvature(totalDistance)
         val isMilestoneCrossing = CityMilestoneCatalog.isCrossing10KmMilestone(totalDistance)
 
+        val horizonY = height * 0.12f
+        val vanishingX = CityMilestoneCatalog.getHorizonVanishingX(totalDistance, width)
+
         // Real Riding Physics: Camera Horizon Roll & Cockpit Banking into Turns
         val cameraBankAngle = (player.leanAngleRad * 6.2f) + (roadCurvature * 3.2f)
 
@@ -271,8 +498,18 @@ fun GameCanvasRenderer(
         val rumbleOffsetY = if (playerSpeed > 60f) sin(engineRumbleTimer * 12f) * (1.8f * vibrationIntensity) else 0f
         val rumbleOffsetX = if (playerSpeed > 140f) cos(engineRumbleTimer * 16f) * (1.2f * vibrationIntensity) else 0f
 
-        // 1. World Transform with Dynamic Horizon Banking & Weight Transfer Pitch
+        // High-Speed Camera FOV Warping: Wide-angle perspective lens expansion during nitro & extreme velocity (>180 km/h)
+        val highSpeedRatio = ((playerSpeed - 180f) / 120f).coerceIn(0f, 1f)
+        val totalFovWarpIntensity = (animatedNitroWarp * 0.85f + highSpeedRatio * 0.35f).coerceIn(0f, 1f)
+        val fovWarpScaleX = 1f + (totalFovWarpIntensity * 0.09f)
+        val fovWarpScaleY = 1f + (totalFovWarpIntensity * 0.05f)
+        val fovPivot = Offset(vanishingX, horizonY)
+
+        // 1. World Transform with Dynamic Horizon Banking, FOV Lens Warping & Weight Transfer Pitch
         withTransform({
+            if (totalFovWarpIntensity > 0.01f) {
+                scale(scaleX = fovWarpScaleX, scaleY = fovWarpScaleY, pivot = fovPivot)
+            }
             rotate(
                 degrees = cameraBankAngle,
                 pivot = Offset(width / 2f, height * 0.45f)
@@ -450,6 +687,33 @@ fun GameCanvasRenderer(
             bikeCenterX = bikeCenterScreenX,
             bikeCenterY = bikeCenterScreenY,
             isFirstPerson = isFirstPersonCam
+        )
+
+        // 6. High-Speed Camera FOV Radial Chromatic Aberration & Lens Dispersion Vignette
+        if (totalFovWarpIntensity > 0.02f) {
+            drawNitroChromaticAberration(
+                width = width,
+                height = height,
+                vanishingX = vanishingX,
+                horizonY = horizonY,
+                warpIntensity = totalFovWarpIntensity,
+                timeSec = engineRumbleTimer
+            )
+        }
+
+        // 7. Moody Cinematic Atmospheric Color Grading, Anamorphic Lens Flare & Road Wetness Shader Filter
+        val isTurbina = player.bikeName.contains("turbina", ignoreCase = true) || player.name.contains("Turbina", ignoreCase = true)
+        drawMoodyCinematicPostProcessing(
+            width = width,
+            height = height,
+            vanishingX = vanishingX,
+            horizonY = horizonY,
+            bikeCenterX = bikeCenterScreenX,
+            bikeCenterY = bikeCenterScreenY,
+            playerSpeed = playerSpeed,
+            isNitro = isNitro,
+            timeSec = engineRumbleTimer,
+            isTurbina = isTurbina
         )
     }
 }
@@ -686,6 +950,96 @@ private fun DrawScope.drawCurvedHighwayRoad(
             drawPath(
                 path = segPath,
                 color = Color.Black.copy(alpha = 0.14f)
+            )
+        }
+    }
+
+    // 3.1 Wet Asphalt Specular Sheen & Glossy Night Highway Reflections
+    // Reflects overhead neon signage, city skyline ambiance, and glossy damp tarmac sheen
+    val wetSheenBrush = Brush.verticalGradient(
+        colors = listOf(
+            Color.Transparent,
+            city.primaryColor.copy(alpha = 0.08f),
+            Color(0xFF00E5FF).copy(alpha = 0.12f),
+            city.secondaryColor.copy(alpha = 0.16f),
+            Color.White.copy(alpha = 0.09f),
+            Color.Transparent
+        ),
+        startY = horizonY,
+        endY = bottomY
+    )
+    drawPath(path = fullRoadPath, brush = wetSheenBrush)
+
+    // Vertical glossy reflection columns streaming on damp asphalt
+    val reflectionColumns = listOf(
+        Triple(-0.65f, city.primaryColor.copy(alpha = 0.18f), 0.15f),
+        Triple(-0.25f, Color(0xFF00E5FF).copy(alpha = 0.22f), 0.12f),
+        Triple(0.20f, city.secondaryColor.copy(alpha = 0.20f), 0.14f),
+        Triple(0.60f, city.primaryColor.copy(alpha = 0.16f), 0.16f)
+    )
+
+    for ((colOffsetFrac, colColor, colWidthFrac) in reflectionColumns) {
+        val colPath = Path()
+        var first = true
+        for (i in 4 until segments step 2) {
+            val c = sliceCenters[i]
+            val hw = sliceHalfWidths[i]
+            val xCenter = c.x + (hw * colOffsetFrac)
+            val w = hw * colWidthFrac
+            val y = c.y
+            if (first) {
+                colPath.moveTo(xCenter - w, y)
+                first = false
+            } else {
+                colPath.lineTo(xCenter - w, y)
+            }
+        }
+        for (i in (segments - 1) downTo 4 step 2) {
+            val c = sliceCenters[i]
+            val hw = sliceHalfWidths[i]
+            val xCenter = c.x + (hw * colOffsetFrac)
+            val w = hw * colWidthFrac
+            val y = c.y
+            colPath.lineTo(xCenter + w, y)
+        }
+        colPath.close()
+
+        val colBrush = Brush.verticalGradient(
+            colors = listOf(
+                Color.Transparent,
+                colColor.copy(alpha = 0.05f),
+                colColor,
+                colColor.copy(alpha = 0.25f),
+                Color.Transparent
+            ),
+            startY = horizonY,
+            endY = bottomY
+        )
+        drawPath(path = colPath, brush = colBrush)
+    }
+
+    // High-speed water surface micro-ripples and damp asphalt grain
+    val rippleCount = 18
+    val rippleColor = Color.White.copy(alpha = 0.22f)
+    for (r in 0 until rippleCount) {
+        val rNorm = ((r * 0.055f) + (scrollOffset * 0.002f)) % 1f
+        val rZ = rNorm * rNorm
+        if (rZ > 0.08f) {
+            val rY = horizonY + (bottomY - horizonY) * rZ
+            val segIndex = (rZ * (segments - 1)).toInt().coerceIn(0, segments - 1)
+            val c = sliceCenters[segIndex]
+            val hw = sliceHalfWidths[segIndex]
+            val rxOffset = ((r * 137) % 100 - 50) / 50f * (hw * 0.7f)
+            val rx = c.x + rxOffset
+            val rLen = (12f + rZ * 55f) * (1f + (speedKmh / 200f).coerceIn(0f, 1f))
+            val rThick = 1.2f + rZ * 2.2f
+
+            drawLine(
+                color = rippleColor.copy(alpha = (rZ * 0.35f).coerceIn(0f, 0.45f)),
+                start = Offset(rx - rLen / 2f, rY),
+                end = Offset(rx + rLen / 2f, rY),
+                strokeWidth = rThick,
+                cap = StrokeCap.Round
             )
         }
     }
@@ -1410,6 +1764,7 @@ private fun DrawScope.drawCityWelcomeOverheadGate(
 
 /**
  * 5. High-Speed Warp Lines & Wind Blur Streaks
+ * Features chromatic aberration prism split streaks during nitro boost
  */
 private fun DrawScope.drawHighSpeedWarpLines(
     width: Float,
@@ -1422,15 +1777,14 @@ private fun DrawScope.drawHighSpeedWarpLines(
     totalDistance: Float
 ) {
     val vanishingX = CityMilestoneCatalog.getHorizonVanishingX(totalDistance, width)
-    val streakCount = if (isNitro) 24 else 14
-    val streakColor = if (isNitro) Color(0xFF00F0FF) else Color.White.copy(alpha = 0.45f)
+    val streakCount = if (isNitro) 32 else 16
 
     for (i in 0 until streakCount) {
         val angle = ((i * (360f / streakCount)) + scrollOffset * 0.15f) * (PI / 180f).toFloat()
         val spread = 60f + (i * 37 % (width * 0.46f))
 
         val startZ = 0.2f + ((scrollOffset * 3.5f + i * 50f) % 200f) / 200f * 0.75f
-        val len = 0.18f
+        val len = if (isNitro) 0.24f else 0.18f
 
         val z0 = startZ
         val z1 = (startZ + len).coerceAtMost(1.0f)
@@ -1441,13 +1795,46 @@ private fun DrawScope.drawHighSpeedWarpLines(
         val x0 = vanishingX + (cos(angle) * spread * (z0 * z0))
         val x1 = vanishingX + (cos(angle) * spread * (z1 * z1))
 
-        drawLine(
-            color = streakColor.copy(alpha = (z0 * 0.75f).coerceIn(0f, 0.9f)),
-            start = Offset(x0, y0),
-            end = Offset(x1, y1),
-            strokeWidth = 1.5f + z0 * 4f,
-            cap = StrokeCap.Round
-        )
+        val alpha = (z0 * 0.75f).coerceIn(0f, 0.9f)
+        val strokeW = 1.5f + z0 * 4f
+
+        if (isNitro) {
+            // Chromatic aberration prism split: Cyan shifted left, Magenta shifted right, bright white core
+            val prismShift = 2.4f * z0
+
+            // Cyan channel offset line
+            drawLine(
+                color = Color(0xFF00F0FF).copy(alpha = alpha * 0.85f),
+                start = Offset(x0 - prismShift, y0),
+                end = Offset(x1 - prismShift, y1),
+                strokeWidth = strokeW,
+                cap = StrokeCap.Round
+            )
+            // Magenta channel offset line
+            drawLine(
+                color = Color(0xFFFF007F).copy(alpha = alpha * 0.85f),
+                start = Offset(x0 + prismShift, y0),
+                end = Offset(x1 + prismShift, y1),
+                strokeWidth = strokeW,
+                cap = StrokeCap.Round
+            )
+            // Hot white optical core
+            drawLine(
+                color = Color.White.copy(alpha = alpha),
+                start = Offset(x0, y0),
+                end = Offset(x1, y1),
+                strokeWidth = (strokeW * 0.6f).coerceAtLeast(1f),
+                cap = StrokeCap.Round
+            )
+        } else {
+            drawLine(
+                color = Color.White.copy(alpha = alpha * 0.5f),
+                start = Offset(x0, y0),
+                end = Offset(x1, y1),
+                strokeWidth = strokeW,
+                cap = StrokeCap.Round
+            )
+        }
     }
 }
 
@@ -1487,7 +1874,7 @@ private fun DrawScope.drawHighwayRacersAndTraffic(
                 val roadWAtZ = topRoadHalfW + (bottomRoadHalfW - topRoadHalfW) * z
 
                 val trafficX = centerX + (roadWAtZ * obs.lane)
-                val scale = (0.42f + z * 1.55f).coerceIn(0.42f, 2.45f)
+                val scale = (0.55f + z * 1.95f).coerceIn(0.55f, 3.0f)
 
                 withTransform({
                     translate(left = trafficX, top = oppY)
@@ -1495,288 +1882,593 @@ private fun DrawScope.drawHighwayRacersAndTraffic(
                 }) {
                     when (obs.type) {
                         ObstacleType.TWO_WHEELER -> {
-                            // Two-Wheeler Commuter / Scooter / Motorcycle Traffic (Enlarged & Detailed)
-                            val bikeCol = Color(obs.primaryColorHex)
-                            // Shadow
-                            drawOval(
-                                color = Color.Black.copy(alpha = 0.55f),
-                                topLeft = Offset(-16f, 6f),
-                                size = Size(32f, 14f)
-                            )
-                            // Rear Wheel & Tire
-                            drawRoundRect(
-                                color = Color(0xFF1E293B),
-                                topLeft = Offset(-6f, -6f),
-                                size = Size(12f, 24f),
-                                cornerRadius = CornerRadius(4f, 4f)
-                            )
-                            // Bodywork / Cowl
-                            drawRoundRect(
-                                color = bikeCol,
-                                topLeft = Offset(-12f, -24f),
-                                size = Size(24f, 26f),
-                                cornerRadius = CornerRadius(5f, 5f)
-                            )
-                            // Commuter Rider Body & Helmet
-                            drawOval(
-                                color = Color(0xFF0F172A),
-                                topLeft = Offset(-10f, -38f),
-                                size = Size(20f, 20f)
-                            )
-                            drawCircle(
-                                color = Color(obs.secondaryColorHex),
-                                radius = 8f,
-                                center = Offset(0f, -32f)
-                            )
-                            // Visor
-                            drawRoundRect(
-                                color = Color(0xFF38BDF8),
-                                topLeft = Offset(-6f, -34f),
-                                size = Size(12f, 5.5f),
-                                cornerRadius = CornerRadius(2f, 2f)
-                            )
-                            // Handlebars & Mirrors
-                            drawLine(
-                                color = Color(0xFF94A3B8),
-                                start = Offset(-18f, -26f),
-                                end = Offset(18f, -26f),
-                                strokeWidth = 3f,
-                                cap = StrokeCap.Round
-                            )
-                            drawCircle(color = Color(0xFF64748B), radius = 2.8f, center = Offset(-18f, -27f))
-                            drawCircle(color = Color(0xFF64748B), radius = 2.8f, center = Offset(18f, -27f))
-                            // Glowing LED Tail Light & Indicator
-                            drawRoundRect(
-                                color = Color(0xFFFF1744),
-                                topLeft = Offset(-6f, -8f),
-                                size = Size(12f, 5f),
-                                cornerRadius = CornerRadius(2f, 2f)
-                            )
-                            if (obs.isHonked) {
-                                val blink = (System.currentTimeMillis() / 160) % 2 == 0L
-                                if (blink) {
-                                    drawCircle(color = Color(0xFFFFD600), radius = 4.5f, center = Offset(14f, -8f))
+                            if (obs.isOncoming) {
+                                val bikeCol = Color(obs.primaryColorHex)
+                                // Ground Headlight Beam Projection
+                                drawPath(
+                                    path = Path().apply {
+                                        moveTo(-6f, -10f)
+                                        lineTo(6f, -10f)
+                                        lineTo(32f, 95f)
+                                        lineTo(-32f, 95f)
+                                        close()
+                                    },
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color.White.copy(alpha = 0.55f), Color(0xFF38BDF8).copy(alpha = 0.25f), Color.Transparent),
+                                        startY = -10f,
+                                        endY = 95f
+                                    )
+                                )
+                                // Shadow
+                                drawOval(
+                                    color = Color.Black.copy(alpha = 0.65f),
+                                    topLeft = Offset(-20f, 6f),
+                                    size = Size(40f, 16f)
+                                )
+                                // Front Wheel & Tire
+                                drawRoundRect(
+                                    color = Color(0xFF1E293B),
+                                    topLeft = Offset(-7f, -4f),
+                                    size = Size(14f, 26f),
+                                    cornerRadius = CornerRadius(4f, 4f)
+                                )
+                                // Front Telescopic Forks & Disc Brake
+                                drawLine(color = Color(0xFF94A3B8), start = Offset(-10f, -22f), end = Offset(-8f, 10f), strokeWidth = 3f)
+                                drawLine(color = Color(0xFF94A3B8), start = Offset(10f, -22f), end = Offset(8f, 10f), strokeWidth = 3f)
+                                drawCircle(color = Color(0xFFCBD5E1), radius = 6f, center = Offset(-6f, 8f))
+
+                                // Front Fairing & Cowl
+                                drawRoundRect(
+                                    color = bikeCol,
+                                    topLeft = Offset(-15f, -28f),
+                                    size = Size(30f, 24f),
+                                    cornerRadius = CornerRadius(5f, 5f)
+                                )
+                                // Front Windscreen
+                                drawRoundRect(
+                                    color = Color(0xFF0F172A).copy(alpha = 0.85f),
+                                    topLeft = Offset(-10f, -34f),
+                                    size = Size(20f, 12f),
+                                    cornerRadius = CornerRadius(4f, 4f)
+                                )
+                                // Rider Torso & Front Helmet
+                                drawOval(
+                                    color = Color(0xFF0F172A),
+                                    topLeft = Offset(-13f, -46f),
+                                    size = Size(26f, 24f)
+                                )
+                                drawCircle(
+                                    color = Color(obs.secondaryColorHex),
+                                    radius = 10f,
+                                    center = Offset(0f, -40f)
+                                )
+                                // Front Visor
+                                drawRoundRect(
+                                    color = Color(0xFF1E293B),
+                                    topLeft = Offset(-8f, -42f),
+                                    size = Size(16f, 7f),
+                                    cornerRadius = CornerRadius(3f, 3f)
+                                )
+                                // Handlebars & Mirrors
+                                drawLine(color = Color(0xFFCBD5E1), start = Offset(-24f, -28f), end = Offset(24f, -28f), strokeWidth = 3.5f, cap = StrokeCap.Round)
+                                drawCircle(color = Color(0xFF64748B), radius = 3.5f, center = Offset(-24f, -29f))
+                                drawCircle(color = Color(0xFF64748B), radius = 3.5f, center = Offset(24f, -29f))
+                                // Front High-Beam Xenon Projector Headlamp (Glowing!)
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(Color.White, Color(0xFF38BDF8).copy(alpha = 0.8f), Color.Transparent),
+                                        center = Offset(0f, -14f),
+                                        radius = 14f
+                                    ),
+                                    radius = 14f,
+                                    center = Offset(0f, -14f)
+                                )
+                                drawCircle(color = Color.White, radius = 6f, center = Offset(0f, -14f))
+                                // Front Amber Indicators
+                                drawCircle(color = Color(0xFFFFD600), radius = 3.5f, center = Offset(-15f, -16f))
+                                drawCircle(color = Color(0xFFFFD600), radius = 3.5f, center = Offset(15f, -16f))
+                            } else {
+                                // Two-Wheeler Commuter / Scooter / Motorcycle Traffic (Enlarged & Detailed)
+                                val bikeCol = Color(obs.primaryColorHex)
+                                // Dynamic Neon Underglow for Commuter Scooter
+                                drawOval(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            bikeCol.copy(alpha = 0.65f),
+                                            Color.Transparent
+                                        ),
+                                        center = Offset(0f, 10f),
+                                        radius = 26f
+                                    ),
+                                    topLeft = Offset(-26f, -2f),
+                                    size = Size(52f, 28f)
+                                )
+                                // Shadow
+                                drawOval(
+                                    color = Color.Black.copy(alpha = 0.60f),
+                                    topLeft = Offset(-20f, 8f),
+                                    size = Size(40f, 16f)
+                                )
+                                // Rear Wheel & Tire (Enlarged)
+                                drawRoundRect(
+                                    color = Color(0xFF1E293B),
+                                    topLeft = Offset(-8f, -6f),
+                                    size = Size(16f, 28f),
+                                    cornerRadius = CornerRadius(5f, 5f)
+                                )
+                                // Bodywork / Cowl
+                                drawRoundRect(
+                                    color = bikeCol,
+                                    topLeft = Offset(-16f, -28f),
+                                    size = Size(32f, 32f),
+                                    cornerRadius = CornerRadius(6f, 6f)
+                                )
+                                // Commuter Rider Body & Helmet
+                                drawOval(
+                                    color = Color(0xFF0F172A),
+                                    topLeft = Offset(-13f, -44f),
+                                    size = Size(26f, 24f)
+                                )
+                                drawCircle(
+                                    color = Color(obs.secondaryColorHex),
+                                    radius = 10f,
+                                    center = Offset(0f, -38f)
+                                )
+                                // Visor
+                                drawRoundRect(
+                                    color = Color(0xFF38BDF8),
+                                    topLeft = Offset(-8f, -40f),
+                                    size = Size(16f, 6.5f),
+                                    cornerRadius = CornerRadius(2.5f, 2.5f)
+                                )
+                                // Handlebars & Mirrors
+                                drawLine(
+                                    color = Color(0xFF94A3B8),
+                                    start = Offset(-23f, -30f),
+                                    end = Offset(23f, -30f),
+                                    strokeWidth = 3.5f,
+                                    cap = StrokeCap.Round
+                                )
+                                drawCircle(color = Color(0xFF64748B), radius = 3.5f, center = Offset(-23f, -31f))
+                                drawCircle(color = Color(0xFF64748B), radius = 3.5f, center = Offset(23f, -31f))
+                                // Glowing LED Tail Light & Indicator
+                                drawRoundRect(
+                                    color = Color(0xFFFF1744),
+                                    topLeft = Offset(-8f, -10f),
+                                    size = Size(16f, 6f),
+                                    cornerRadius = CornerRadius(2f, 2f)
+                                )
+                                if (obs.isHonked) {
+                                    val blink = (System.currentTimeMillis() / 160) % 2 == 0L
+                                    if (blink) {
+                                        drawCircle(color = Color(0xFFFFD600), radius = 5.5f, center = Offset(18f, -10f))
+                                    }
                                 }
                             }
                         }
                         ObstacleType.FOUR_WHEELER, ObstacleType.TRAFFIC_CAR -> {
-                            // Highway Sedan / Sports Car (Enlarged, Imposing Stance)
-                            val carCol = Color(obs.primaryColorHex)
-                            // Shadow
-                            drawOval(
-                                color = Color.Black.copy(alpha = 0.65f),
-                                topLeft = Offset(-31f, 2f),
-                                size = Size(62f, 18f)
-                            )
-                            // Car Lower Bumper & Body
-                            drawRoundRect(
-                                color = carCol,
-                                topLeft = Offset(-26f, -32f),
-                                size = Size(52f, 38f),
-                                cornerRadius = CornerRadius(6f, 6f)
-                            )
-                            // Rear Windshield / Glass Cabin
-                            drawRoundRect(
-                                color = Color(0xFF0F172A),
-                                topLeft = Offset(-19f, -30f),
-                                size = Size(38f, 20f),
-                                cornerRadius = CornerRadius(4f, 4f)
-                            )
-                            // Aerodynamic Lip Spoiler
-                            drawRoundRect(
-                                color = Color(obs.secondaryColorHex),
-                                topLeft = Offset(-24f, -14f),
-                                size = Size(48f, 4.5f),
-                                cornerRadius = CornerRadius(1.5f, 1.5f)
-                            )
-                            // Dual Wide LED Taillight Bars
-                            drawRoundRect(
-                                color = Color(0xFFFF1744),
-                                topLeft = Offset(-23f, -10f),
-                                size = Size(15f, 5.5f),
-                                cornerRadius = CornerRadius(2f, 2f)
-                            )
-                            drawRoundRect(
-                                color = Color(0xFFFF1744),
-                                topLeft = Offset(8f, -10f),
-                                size = Size(15f, 5.5f),
-                                cornerRadius = CornerRadius(2f, 2f)
-                            )
-                            // Dual Chrome Exhaust Pipes
-                            drawCircle(color = Color(0xFFCBD5E1), radius = 3.2f, center = Offset(-16f, 4f))
-                            drawCircle(color = Color(0xFFCBD5E1), radius = 3.2f, center = Offset(16f, 4f))
-                            // Honk response turn signal indicator
-                            if (obs.isHonked) {
-                                val blink = (System.currentTimeMillis() / 160) % 2 == 0L
-                                if (blink) {
-                                    val indX = if (obs.lane >= 0f) 20f else -20f
-                                    drawCircle(color = Color(0xFFFFD600), radius = 5.5f, center = Offset(indX, -10f))
+                            if (obs.isOncoming) {
+                                val carCol = Color(obs.primaryColorHex)
+                                // Twin High-Beam Headlight Projection Cones on Asphalt
+                                drawPath(
+                                    path = Path().apply {
+                                        moveTo(-24f, -10f)
+                                        lineTo(-12f, -10f)
+                                        lineTo(-55f, 110f)
+                                        lineTo(-85f, 110f)
+                                        close()
+                                    },
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color.White.copy(alpha = 0.60f), Color(0xFFE0F2FE).copy(alpha = 0.25f), Color.Transparent),
+                                        startY = -10f,
+                                        endY = 110f
+                                    )
+                                )
+                                drawPath(
+                                    path = Path().apply {
+                                        moveTo(12f, -10f)
+                                        lineTo(24f, -10f)
+                                        lineTo(85f, 110f)
+                                        lineTo(55f, 110f)
+                                        close()
+                                    },
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color.White.copy(alpha = 0.60f), Color(0xFFE0F2FE).copy(alpha = 0.25f), Color.Transparent),
+                                        startY = -10f,
+                                        endY = 110f
+                                    )
+                                )
+                                // Ground Shadow
+                                drawOval(
+                                    color = Color.Black.copy(alpha = 0.75f),
+                                    topLeft = Offset(-38f, 4f),
+                                    size = Size(76f, 22f)
+                                )
+                                // Car Front Bumper & Body Hood
+                                drawRoundRect(
+                                    color = carCol,
+                                    topLeft = Offset(-34f, -38f),
+                                    size = Size(68f, 46f),
+                                    cornerRadius = CornerRadius(8f, 8f)
+                                )
+                                // Front Windshield with Driver Silhouette
+                                drawRoundRect(
+                                    color = Color(0xFF0F172A),
+                                    topLeft = Offset(-25f, -36f),
+                                    size = Size(50f, 22f),
+                                    cornerRadius = CornerRadius(5f, 5f)
+                                )
+                                drawCircle(color = Color(0xFF334155), radius = 5f, center = Offset(10f, -27f)) // Driver head
+                                // Front Radiator Grille
+                                drawRoundRect(
+                                    color = Color(0xFF111827),
+                                    topLeft = Offset(-22f, -12f),
+                                    size = Size(44f, 13f),
+                                    cornerRadius = CornerRadius(3f, 3f)
+                                )
+                                // Grille Horizontal Slats & Chrome Emblem
+                                drawLine(color = Color(0xFF475569), start = Offset(-18f, -6f), end = Offset(18f, -6f), strokeWidth = 2f)
+                                drawCircle(color = Color(0xFFCBD5E1), radius = 3.5f, center = Offset(0f, -6f))
+                                // Front License Plate
+                                drawRect(color = Color.White, topLeft = Offset(-10f, 1f), size = Size(20f, 6.5f))
+                                drawRect(color = Color.Black, topLeft = Offset(-8f, 2.5f), size = Size(16f, 3.5f))
+
+                                // Dynamic Twin Glowing Xenon Headlights
+                                drawRoundRect(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(Color.White, Color(0xFF38BDF8).copy(alpha = 0.85f), Color.Transparent),
+                                        center = Offset(-22f, -10f),
+                                        radius = 16f
+                                    ),
+                                    topLeft = Offset(-32f, -18f),
+                                    size = Size(20f, 16f),
+                                    cornerRadius = CornerRadius(4f, 4f)
+                                )
+                                drawRoundRect(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(Color.White, Color(0xFF38BDF8).copy(alpha = 0.85f), Color.Transparent),
+                                        center = Offset(22f, -10f),
+                                        radius = 16f
+                                    ),
+                                    topLeft = Offset(12f, -18f),
+                                    size = Size(20f, 16f),
+                                    cornerRadius = CornerRadius(4f, 4f)
+                                )
+                                drawRoundRect(color = Color.White, topLeft = Offset(-29f, -14f), size = Size(14f, 8f), cornerRadius = CornerRadius(2.5f, 2.5f))
+                                drawRoundRect(color = Color.White, topLeft = Offset(15f, -14f), size = Size(14f, 8f), cornerRadius = CornerRadius(2.5f, 2.5f))
+                                // Amber Corner Lights
+                                drawCircle(color = Color(0xFFFFD600), radius = 3.5f, center = Offset(-31f, -10f))
+                                drawCircle(color = Color(0xFFFFD600), radius = 3.5f, center = Offset(31f, -10f))
+                            } else {
+                                // Highway Sedan / Sports Car (Enlarged, Imposing Stance)
+                                val carCol = Color(obs.primaryColorHex)
+                                // Shadow
+                                drawOval(
+                                    color = Color.Black.copy(alpha = 0.70f),
+                                    topLeft = Offset(-38f, 4f),
+                                    size = Size(76f, 22f)
+                                )
+                                // Car Lower Bumper & Body
+                                drawRoundRect(
+                                    color = carCol,
+                                    topLeft = Offset(-33f, -38f),
+                                    size = Size(66f, 46f),
+                                    cornerRadius = CornerRadius(8f, 8f)
+                                )
+                                // Rear Windshield / Glass Cabin
+                                drawRoundRect(
+                                    color = Color(0xFF0F172A),
+                                    topLeft = Offset(-24f, -36f),
+                                    size = Size(48f, 24f),
+                                    cornerRadius = CornerRadius(5f, 5f)
+                                )
+                                // Aerodynamic Lip Spoiler
+                                drawRoundRect(
+                                    color = Color(obs.secondaryColorHex),
+                                    topLeft = Offset(-30f, -16f),
+                                    size = Size(60f, 5.5f),
+                                    cornerRadius = CornerRadius(2f, 2f)
+                                )
+                                // Dual Wide LED Taillight Bars
+                                drawRoundRect(
+                                    color = Color(0xFFFF1744),
+                                    topLeft = Offset(-29f, -12f),
+                                    size = Size(19f, 6.5f),
+                                    cornerRadius = CornerRadius(2.5f, 2.5f)
+                                )
+                                drawRoundRect(
+                                    color = Color(0xFFFF1744),
+                                    topLeft = Offset(10f, -12f),
+                                    size = Size(19f, 6.5f),
+                                    cornerRadius = CornerRadius(2.5f, 2.5f)
+                                )
+                                // Dual Chrome Exhaust Pipes
+                                drawCircle(color = Color(0xFFCBD5E1), radius = 4f, center = Offset(-20f, 5f))
+                                drawCircle(color = Color(0xFFCBD5E1), radius = 4f, center = Offset(20f, 5f))
+                                // Honk response turn signal indicator
+                                if (obs.isHonked) {
+                                    val blink = (System.currentTimeMillis() / 160) % 2 == 0L
+                                    if (blink) {
+                                        val indX = if (obs.lane >= 0f) 25f else -25f
+                                        drawCircle(color = Color(0xFFFFD600), radius = 6.5f, center = Offset(indX, -12f))
+                                    }
                                 }
                             }
                         }
                         ObstacleType.TRAFFIC_TAXI -> {
-                            // City Taxi (High-Visibility Enlarged Cabin)
-                            drawOval(
-                                color = Color.Black.copy(alpha = 0.65f),
-                                topLeft = Offset(-30f, 2f),
-                                size = Size(60f, 18f)
-                            )
-                            drawRoundRect(
-                                color = Color(0xFFFFD600),
-                                topLeft = Offset(-26f, -33f),
-                                size = Size(52f, 38f),
-                                cornerRadius = CornerRadius(6f, 6f)
-                            )
-                            // Checker stripe
-                            for (c in 0..6) {
-                                val col = if (c % 2 == 0) Color.Black else Color.White
-                                drawRect(
-                                    color = col,
-                                    topLeft = Offset(-26f + (c * 7.42f), -14f),
-                                    size = Size(7.42f, 5f)
+                            if (obs.isOncoming) {
+                                // Oncoming Taxi with Bright Headlights & Roof Taxi Sign
+                                drawPath(
+                                    path = Path().apply {
+                                        moveTo(-24f, -10f); lineTo(-12f, -10f); lineTo(-55f, 110f); lineTo(-85f, 110f); close()
+                                    },
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color.White.copy(alpha = 0.60f), Color(0xFFFEF08A).copy(alpha = 0.25f), Color.Transparent),
+                                        startY = -10f, endY = 110f
+                                    )
                                 )
+                                drawPath(
+                                    path = Path().apply {
+                                        moveTo(12f, -10f); lineTo(24f, -10f); lineTo(85f, 110f); lineTo(55f, 110f); close()
+                                    },
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color.White.copy(alpha = 0.60f), Color(0xFFFEF08A).copy(alpha = 0.25f), Color.Transparent),
+                                        startY = -10f, endY = 110f
+                                    )
+                                )
+                                drawOval(color = Color.Black.copy(alpha = 0.75f), topLeft = Offset(-38f, 4f), size = Size(76f, 22f))
+                                drawRoundRect(color = Color(0xFFFFD600), topLeft = Offset(-34f, -40f), size = Size(68f, 48f), cornerRadius = CornerRadius(8f, 8f))
+                                // Front Windshield
+                                drawRoundRect(color = Color(0xFF0F172A), topLeft = Offset(-25f, -36f), size = Size(50f, 22f), cornerRadius = CornerRadius(5f, 5f))
+                                // Glowing Roof Taxi Sign
+                                drawRoundRect(color = Color.White, topLeft = Offset(-14f, -54f), size = Size(28f, 12f), cornerRadius = CornerRadius(3f, 3f))
+                                drawRoundRect(color = Color(0xFFFF9100), topLeft = Offset(-10f, -50f), size = Size(20f, 5f), cornerRadius = CornerRadius(1.5f, 1.5f))
+                                // Front Grille & Headlights
+                                drawRoundRect(color = Color(0xFF1E293B), topLeft = Offset(-22f, -12f), size = Size(44f, 12f), cornerRadius = CornerRadius(3f, 3f))
+                                drawRoundRect(color = Color.White, topLeft = Offset(-29f, -14f), size = Size(14f, 8f), cornerRadius = CornerRadius(2.5f, 2.5f))
+                                drawRoundRect(color = Color.White, topLeft = Offset(15f, -14f), size = Size(14f, 8f), cornerRadius = CornerRadius(2.5f, 2.5f))
+                            } else {
+                                // City Taxi (High-Visibility Enlarged Cabin)
+                                drawOval(
+                                    color = Color.Black.copy(alpha = 0.70f),
+                                    topLeft = Offset(-38f, 4f),
+                                    size = Size(76f, 22f)
+                                )
+                                drawRoundRect(
+                                    color = Color(0xFFFFD600),
+                                    topLeft = Offset(-33f, -40f),
+                                    size = Size(66f, 48f),
+                                    cornerRadius = CornerRadius(8f, 8f)
+                                )
+                                // Checker stripe
+                                for (c in 0..7) {
+                                    val col = if (c % 2 == 0) Color.Black else Color.White
+                                    drawRect(
+                                        color = col,
+                                        topLeft = Offset(-33f + (c * 8.25f), -16f),
+                                        size = Size(8.25f, 6f)
+                                    )
+                                }
+                                drawRoundRect(
+                                    color = Color(0xFF0F172A),
+                                    topLeft = Offset(-24f, -36f),
+                                    size = Size(48f, 24f),
+                                    cornerRadius = CornerRadius(5f, 5f)
+                                )
+                                // Glowing Roof Taxi Sign
+                                drawRoundRect(
+                                    color = Color(0xFFFFFFFF),
+                                    topLeft = Offset(-13f, -52f),
+                                    size = Size(26f, 11f),
+                                    cornerRadius = CornerRadius(3f, 3f)
+                                )
+                                drawCircle(color = Color(0xFFFF9100), radius = 3.5f, center = Offset(0f, -46.5f))
+                                // Taillights
+                                drawCircle(color = Color(0xFFFF1744), radius = 6.5f, center = Offset(-22f, -7f))
+                                drawCircle(color = Color(0xFFFF1744), radius = 6.5f, center = Offset(22f, -7f))
                             }
-                            drawRoundRect(
-                                color = Color(0xFF0F172A),
-                                topLeft = Offset(-19f, -30f),
-                                size = Size(38f, 20f),
-                                cornerRadius = CornerRadius(4f, 4f)
-                            )
-                            // Glowing Roof Taxi Sign
-                            drawRoundRect(
-                                color = Color(0xFFFFFFFF),
-                                topLeft = Offset(-10f, -42f),
-                                size = Size(20f, 9f),
-                                cornerRadius = CornerRadius(2.5f, 2.5f)
-                            )
-                            drawCircle(color = Color(0xFFFF9100), radius = 3f, center = Offset(0f, -37.5f))
-                            // Taillights
-                            drawCircle(color = Color(0xFFFF1744), radius = 5.5f, center = Offset(-18f, -6f))
-                            drawCircle(color = Color(0xFFFF1744), radius = 5.5f, center = Offset(18f, -6f))
                         }
                         ObstacleType.TRUCK -> {
-                            // Massive 18-Wheeler Heavy Freight Truck / Container (Imposing Giant)
-                            val truckCol = Color(obs.primaryColorHex)
-                            // Huge ground shadow
-                            drawOval(
-                                color = Color.Black.copy(alpha = 0.8f),
-                                topLeft = Offset(-44f, 4f),
-                                size = Size(88f, 26f)
-                            )
-                            // Heavy Dual Axles & Mudflaps (Left & Right)
-                            drawRoundRect(
-                                color = Color(0xFF0F172A),
-                                topLeft = Offset(-36f, -6f),
-                                size = Size(16f, 24f),
-                                cornerRadius = CornerRadius(4f, 4f)
-                            )
-                            drawRoundRect(
-                                color = Color(0xFF0F172A),
-                                topLeft = Offset(20f, -6f),
-                                size = Size(16f, 24f),
-                                cornerRadius = CornerRadius(4f, 4f)
-                            )
-                            // Mudflaps with Hazard Reflectors
-                            drawRect(color = Color.White, topLeft = Offset(-33f, 10f), size = Size(10f, 4f))
-                            drawRect(color = Color.White, topLeft = Offset(23f, 10f), size = Size(10f, 4f))
+                            if (obs.isOncoming) {
+                                val truckCol = Color(obs.primaryColorHex)
+                                // Giant 18-Wheeler Dual Highway Floodlight Cones
+                                drawPath(
+                                    path = Path().apply {
+                                        moveTo(-36f, -18f); lineTo(-18f, -18f); lineTo(-90f, 130f); lineTo(-140f, 130f); close()
+                                    },
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color.White.copy(alpha = 0.70f), Color(0xFFE0F2FE).copy(alpha = 0.35f), Color.Transparent),
+                                        startY = -18f, endY = 130f
+                                    )
+                                )
+                                drawPath(
+                                    path = Path().apply {
+                                        moveTo(18f, -18f); lineTo(36f, -18f); lineTo(140f, 130f); lineTo(90f, 130f); close()
+                                    },
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color.White.copy(alpha = 0.70f), Color(0xFFE0F2FE).copy(alpha = 0.35f), Color.Transparent),
+                                        startY = -18f, endY = 130f
+                                    )
+                                )
+                                // Huge Ground Shadow
+                                drawOval(color = Color.Black.copy(alpha = 0.85f), topLeft = Offset(-56f, 6f), size = Size(112f, 32f))
+                                // Front Heavy Tires
+                                drawRoundRect(color = Color(0xFF0F172A), topLeft = Offset(-46f, -10f), size = Size(18f, 32f), cornerRadius = CornerRadius(5f, 5f))
+                                drawRoundRect(color = Color(0xFF0F172A), topLeft = Offset(28f, -10f), size = Size(18f, 32f), cornerRadius = CornerRadius(5f, 5f))
 
-                            // Large Cargo Container Box (Tall & Massive!)
-                            val boxW = 68f
-                            val boxH = 82f
-                            drawRoundRect(
-                                color = truckCol,
-                                topLeft = Offset(-boxW / 2f, -boxH),
-                                size = Size(boxW, boxH),
-                                cornerRadius = CornerRadius(5f, 5f)
-                            )
-                            // Container Door Ribs & Latches
-                            drawLine(
-                                color = Color.Black.copy(alpha = 0.45f),
-                                start = Offset(0f, -boxH),
-                                end = Offset(0f, -2f),
-                                strokeWidth = 3f
-                            )
-                            drawLine(
-                                color = Color(0xFFCBD5E1),
-                                start = Offset(-9f, -36f),
-                                end = Offset(-9f, -14f),
-                                strokeWidth = 2.5f
-                            )
-                            drawLine(
-                                color = Color(0xFFCBD5E1),
-                                start = Offset(9f, -36f),
-                                end = Offset(9f, -14f),
-                                strokeWidth = 2.5f
-                            )
+                                // Giant Front Truck Cab Box
+                                val boxW = 88f
+                                val boxH = 104f
+                                drawRoundRect(color = truckCol, topLeft = Offset(-boxW / 2f, -boxH), size = Size(boxW, boxH), cornerRadius = CornerRadius(6f, 6f))
 
-                            // Heavy Red/White Chevron Hazard Stripe across bumper
-                            for (s in 0..7) {
-                                val sc = if (s % 2 == 0) Color(0xFFFF1744) else Color.White
-                                drawRect(
-                                    color = sc,
-                                    topLeft = Offset(-boxW / 2f + (s * 8.5f), -10f),
-                                    size = Size(8.5f, 7f)
+                                // 5 Amber Clearance Marker Lamps on Roof Visor
+                                for (m in -2..2) {
+                                    drawCircle(color = Color(0xFFFFD600), radius = 4f, center = Offset(m * 18f, -boxH + 6f))
+                                }
+                                // Massive Front Windshield & Wipers
+                                drawRoundRect(color = Color(0xFF0F172A), topLeft = Offset(-38f, -boxH + 16f), size = Size(76f, 34f), cornerRadius = CornerRadius(4f, 4f))
+                                drawLine(color = Color(0xFF64748B), start = Offset(-18f, -boxH + 46f), end = Offset(-6f, -boxH + 24f), strokeWidth = 2.5f)
+                                drawLine(color = Color(0xFF64748B), start = Offset(18f, -boxH + 46f), end = Offset(30f, -boxH + 24f), strokeWidth = 2.5f)
+
+                                // Massive Vertical Chrome Grille
+                                drawRoundRect(color = Color(0xFF1E293B), topLeft = Offset(-30f, -48f), size = Size(60f, 40f), cornerRadius = CornerRadius(4f, 4f))
+                                for (g in -4..4) {
+                                    drawLine(color = Color(0xFFCBD5E1), start = Offset(g * 6f, -46f), end = Offset(g * 6f, -10f), strokeWidth = 2.5f)
+                                }
+                                // Heavy Steel Front Bumper & Registration
+                                drawRect(color = Color(0xFF475569), topLeft = Offset(-42f, -8f), size = Size(84f, 14f))
+                                drawRect(color = Color.White, topLeft = Offset(-14f, -4f), size = Size(28f, 8f))
+
+                                // Quad Heavy Xenon Headlights
+                                drawRoundRect(color = Color.White, topLeft = Offset(-38f, -22f), size = Size(16f, 12f), cornerRadius = CornerRadius(3f, 3f))
+                                drawRoundRect(color = Color.White, topLeft = Offset(22f, -22f), size = Size(16f, 12f), cornerRadius = CornerRadius(3f, 3f))
+                            } else {
+                                // Massive 18-Wheeler Heavy Freight Truck / Container (Imposing Giant)
+                                val truckCol = Color(obs.primaryColorHex)
+                                // Huge ground shadow
+                                drawOval(
+                                    color = Color.Black.copy(alpha = 0.85f),
+                                    topLeft = Offset(-56f, 6f),
+                                    size = Size(112f, 32f)
+                                )
+                                // Heavy Dual Axles & Mudflaps (Left & Right)
+                                drawRoundRect(
+                                    color = Color(0xFF0F172A),
+                                    topLeft = Offset(-46f, -8f),
+                                    size = Size(20f, 30f),
+                                    cornerRadius = CornerRadius(5f, 5f)
+                                )
+                                drawRoundRect(
+                                    color = Color(0xFF0F172A),
+                                    topLeft = Offset(26f, -8f),
+                                    size = Size(20f, 30f),
+                                    cornerRadius = CornerRadius(5f, 5f)
+                                )
+                                // Mudflaps with Hazard Reflectors
+                                drawRect(color = Color.White, topLeft = Offset(-42f, 14f), size = Size(13f, 5f))
+                                drawRect(color = Color.White, topLeft = Offset(29f, 14f), size = Size(13f, 5f))
+
+                                // Large Cargo Container Box (Tall & Massive!)
+                                val boxW = 88f
+                                val boxH = 104f
+                                drawRoundRect(
+                                    color = truckCol,
+                                    topLeft = Offset(-boxW / 2f, -boxH),
+                                    size = Size(boxW, boxH),
+                                    cornerRadius = CornerRadius(6f, 6f)
+                                )
+                                // Container Door Ribs & Latches
+                                drawLine(
+                                    color = Color.Black.copy(alpha = 0.45f),
+                                    start = Offset(0f, -boxH),
+                                    end = Offset(0f, -2f),
+                                    strokeWidth = 3.5f
+                                )
+                                drawLine(
+                                    color = Color(0xFFCBD5E1),
+                                    start = Offset(-12f, -46f),
+                                    end = Offset(-12f, -18f),
+                                    strokeWidth = 3f
+                                )
+                                drawLine(
+                                    color = Color(0xFFCBD5E1),
+                                    start = Offset(12f, -46f),
+                                    end = Offset(12f, -18f),
+                                    strokeWidth = 3f
+                                )
+
+                                // Heavy Red/White Chevron Hazard Stripe across bumper
+                                for (s in 0..7) {
+                                    val sc = if (s % 2 == 0) Color(0xFFFF1744) else Color.White
+                                    drawRect(
+                                        color = sc,
+                                        topLeft = Offset(-boxW / 2f + (s * 11f), -12f),
+                                        size = Size(11f, 9f)
+                                    )
+                                }
+                                // Triple Amber Roof Marker Clearance Lamps
+                                drawCircle(color = Color(0xFFFFD600), radius = 4.5f, center = Offset(-30f, -boxH + 6f))
+                                drawCircle(color = Color(0xFFFFD600), radius = 4.5f, center = Offset(0f, -boxH + 6f))
+                                drawCircle(color = Color(0xFFFFD600), radius = 4.5f, center = Offset(30f, -boxH + 6f))
+                                // Dual Heavy Taillight Clusters
+                                drawRoundRect(
+                                    color = Color(0xFFFF1744),
+                                    topLeft = Offset(-38f, -28f),
+                                    size = Size(14f, 10f),
+                                    cornerRadius = CornerRadius(2.5f, 2.5f)
+                                )
+                                drawRoundRect(
+                                    color = Color(0xFFFF1744),
+                                    topLeft = Offset(24f, -28f),
+                                    size = Size(14f, 10f),
+                                    cornerRadius = CornerRadius(2.5f, 2.5f)
                                 )
                             }
-                            // Triple Amber Roof Marker Clearance Lamps
-                            drawCircle(color = Color(0xFFFFD600), radius = 3.5f, center = Offset(-24f, -boxH + 5f))
-                            drawCircle(color = Color(0xFFFFD600), radius = 3.5f, center = Offset(0f, -boxH + 5f))
-                            drawCircle(color = Color(0xFFFFD600), radius = 3.5f, center = Offset(24f, -boxH + 5f))
-                            // Dual Heavy Taillight Clusters
-                            drawRoundRect(
-                                color = Color(0xFFFF1744),
-                                topLeft = Offset(-30f, -22f),
-                                size = Size(11f, 8f),
-                                cornerRadius = CornerRadius(2f, 2f)
-                            )
-                            drawRoundRect(
-                                color = Color(0xFFFF1744),
-                                topLeft = Offset(19f, -22f),
-                                size = Size(11f, 8f),
-                                cornerRadius = CornerRadius(2f, 2f)
-                            )
                         }
                         ObstacleType.TEMPO -> {
-                            // 3-Wheeler Auto-Tempo / Cargo Delivery Van (Enlarged)
-                            val tempoCol = Color(obs.primaryColorHex)
-                            drawOval(
-                                color = Color.Black.copy(alpha = 0.6f),
-                                topLeft = Offset(-24f, 2f),
-                                size = Size(48f, 16f)
-                            )
-                            // Rear Tires
-                            drawRoundRect(
-                                color = Color(0xFF1E293B),
-                                topLeft = Offset(-21f, -8f),
-                                size = Size(9f, 20f),
-                                cornerRadius = CornerRadius(3.5f, 3.5f)
-                            )
-                            drawRoundRect(
-                                color = Color(0xFF1E293B),
-                                topLeft = Offset(12f, -8f),
-                                size = Size(9f, 20f),
-                                cornerRadius = CornerRadius(3.5f, 3.5f)
-                            )
-                            // Lower Chassis / Cargo Bed
-                            drawRoundRect(
-                                color = tempoCol,
-                                topLeft = Offset(-19f, -30f),
-                                size = Size(38f, 28f),
-                                cornerRadius = CornerRadius(4f, 4f)
-                            )
-                            // Canvas Canopy Roof Cover
-                            drawRoundRect(
-                                color = Color(0xFF334155),
-                                topLeft = Offset(-18f, -44f),
-                                size = Size(36f, 18f),
-                                cornerRadius = CornerRadius(5f, 5f)
-                            )
-                            // Rear Spare Tire Mounted on Back
-                            drawCircle(color = Color(0xFF0F172A), radius = 8f, center = Offset(0f, -20f))
-                            drawCircle(color = Color(0xFF64748B), radius = 3.5f, center = Offset(0f, -20f))
-                            // Round Tail Lights
-                            drawCircle(color = Color(0xFFFF1744), radius = 4.5f, center = Offset(-13f, -7f))
-                            drawCircle(color = Color(0xFFFF1744), radius = 4.5f, center = Offset(13f, -7f))
+                            if (obs.isOncoming) {
+                                val tempoCol = Color(obs.primaryColorHex)
+                                // Headlight Beam
+                                drawPath(
+                                    path = Path().apply {
+                                        moveTo(-10f, -8f); lineTo(10f, -8f); lineTo(45f, 95f); lineTo(-45f, 95f); close()
+                                    },
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color.White.copy(alpha = 0.60f), Color(0xFFFEF08A).copy(alpha = 0.25f), Color.Transparent),
+                                        startY = -8f, endY = 95f
+                                    )
+                                )
+                                drawOval(color = Color.Black.copy(alpha = 0.65f), topLeft = Offset(-30f, 3f), size = Size(60f, 20f))
+                                drawRoundRect(color = tempoCol, topLeft = Offset(-24f, -42f), size = Size(48f, 40f), cornerRadius = CornerRadius(5f, 5f))
+                                drawRoundRect(color = Color(0xFF334155), topLeft = Offset(-23f, -56f), size = Size(46f, 20f), cornerRadius = CornerRadius(6f, 6f))
+                                // Front Windscreen
+                                drawRoundRect(color = Color(0xFF0F172A), topLeft = Offset(-19f, -48f), size = Size(38f, 20f), cornerRadius = CornerRadius(4f, 4f))
+                                // Front Round Headlight
+                                drawCircle(color = Color.White, radius = 8f, center = Offset(0f, -14f))
+                                drawCircle(color = Color(0xFFFFD600), radius = 4f, center = Offset(-18f, -14f))
+                                drawCircle(color = Color(0xFFFFD600), radius = 4f, center = Offset(18f, -14f))
+                            } else {
+                                // 3-Wheeler Auto-Tempo / Cargo Delivery Van (Enlarged)
+                                val tempoCol = Color(obs.primaryColorHex)
+                                drawOval(
+                                    color = Color.Black.copy(alpha = 0.65f),
+                                    topLeft = Offset(-30f, 3f),
+                                    size = Size(60f, 20f)
+                                )
+                                // Rear Tires
+                                drawRoundRect(
+                                    color = Color(0xFF1E293B),
+                                    topLeft = Offset(-26f, -10f),
+                                    size = Size(12f, 24f),
+                                    cornerRadius = CornerRadius(4f, 4f)
+                                )
+                                drawRoundRect(
+                                    color = Color(0xFF1E293B),
+                                    topLeft = Offset(14f, -10f),
+                                    size = Size(12f, 24f),
+                                    cornerRadius = CornerRadius(4f, 4f)
+                                )
+                                // Lower Chassis / Cargo Bed
+                                drawRoundRect(
+                                    color = tempoCol,
+                                    topLeft = Offset(-24f, -38f),
+                                    size = Size(48f, 36f),
+                                    cornerRadius = CornerRadius(5f, 5f)
+                                )
+                                // Canvas Canopy Roof Cover
+                                drawRoundRect(
+                                    color = Color(0xFF334155),
+                                    topLeft = Offset(-23f, -56f),
+                                    size = Size(46f, 22f),
+                                    cornerRadius = CornerRadius(6f, 6f)
+                                )
+                                // Rear Spare Tire Mounted on Back
+                                drawCircle(color = Color(0xFF0F172A), radius = 10f, center = Offset(0f, -25f))
+                                drawCircle(color = Color(0xFF64748B), radius = 4.5f, center = Offset(0f, -25f))
+                                // Round Tail Lights
+                                drawCircle(color = Color(0xFFFF1744), radius = 5.5f, center = Offset(-16f, -9f))
+                                drawCircle(color = Color(0xFFFF1744), radius = 5.5f, center = Offset(16f, -9f))
+                            }
                         }
                         ObstacleType.TRAIN_CROSSING -> {
                             // Level Railway Crossing Spanning Across Highway
@@ -2040,7 +2732,7 @@ private fun DrawScope.drawHighwayRacersAndTraffic(
             val oppX = centerX + (roadWAtZ * laneOffsetFraction)
 
             // Dynamic scale: scales up large as you approach, then zooms past behind!
-            val scale = (0.42f + z * 1.55f).coerceIn(0.42f, 2.45f)
+            val scale = (0.55f + z * 1.95f).coerceIn(0.55f, 3.0f)
             val oppPrimary = Color(opp.primaryColorHex)
             val oppSecondary = Color(opp.secondaryColorHex)
             val oppLean = opp.leanAngleRad * 18f
@@ -2055,11 +2747,28 @@ private fun DrawScope.drawHighwayRacersAndTraffic(
                 translate(left = oppX, top = oppY)
                 scale(scaleX = scale, scaleY = scale, pivot = Offset.Zero)
             }) {
+                // Dynamic Neon Underglow for Competitor Superbike
+                val oppUnderglowW = 56f
+                val oppUnderglowH = 30f
+                drawOval(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            oppPrimary.copy(alpha = 0.75f),
+                            oppSecondary.copy(alpha = 0.45f),
+                            Color.Transparent
+                        ),
+                        center = Offset(oppLean * 0.3f, 0f),
+                        radius = oppUnderglowW * 0.62f
+                    ),
+                    topLeft = Offset(-oppUnderglowW / 2f + oppLean * 0.3f, -oppUnderglowH / 2f),
+                    size = Size(oppUnderglowW, oppUnderglowH)
+                )
+
                 // Shadow
                 drawOval(
-                    color = Color.Black.copy(alpha = 0.55f),
-                    topLeft = Offset(-16f, -12f),
-                    size = Size(32f, 22f)
+                    color = Color.Black.copy(alpha = 0.60f),
+                    topLeft = Offset(-20f, -14f),
+                    size = Size(40f, 26f)
                 )
 
                 // Slipstream Wind Trail when passing
@@ -2067,33 +2776,33 @@ private fun DrawScope.drawHighwayRacersAndTraffic(
                     val trailAlpha = ((z - 0.65f) / 0.35f).coerceIn(0f, 0.7f)
                     drawLine(
                         color = Color(0xFF00F0FF).copy(alpha = trailAlpha),
-                        start = Offset(-10f, 10f),
-                        end = Offset(-10f, 40f),
-                        strokeWidth = 3f
+                        start = Offset(-13f, 12f),
+                        end = Offset(-13f, 48f),
+                        strokeWidth = 3.5f
                     )
                     drawLine(
                         color = Color(0xFF00F0FF).copy(alpha = trailAlpha),
-                        start = Offset(10f, 10f),
-                        end = Offset(10f, 40f),
-                        strokeWidth = 3f
+                        start = Offset(13f, 12f),
+                        end = Offset(13f, 48f),
+                        strokeWidth = 3.5f
                     )
                 }
 
                 // Rear Racing Tire
                 drawRoundRect(
                     color = Color(0xFF161B22),
-                    topLeft = Offset(-6f + oppLean * 0.2f, -10f),
-                    size = Size(12f, 22f),
-                    cornerRadius = CornerRadius(4f, 4f)
+                    topLeft = Offset(-8f + oppLean * 0.2f, -12f),
+                    size = Size(16f, 26f),
+                    cornerRadius = CornerRadius(5f, 5f)
                 )
 
                 // Bike Fairing / Tail Cowl
                 val path = Path().apply {
-                    moveTo(0f, -26f)
-                    lineTo(10f + oppLean * 0.3f, -8f)
-                    lineTo(8f + oppLean * 0.4f, 12f)
-                    lineTo(-8f + oppLean * 0.4f, 12f)
-                    lineTo(-10f + oppLean * 0.3f, -8f)
+                    moveTo(0f, -32f)
+                    lineTo(13f + oppLean * 0.3f, -10f)
+                    lineTo(10f + oppLean * 0.4f, 14f)
+                    lineTo(-10f + oppLean * 0.4f, 14f)
+                    lineTo(-13f + oppLean * 0.3f, -10f)
                     close()
                 }
                 drawPath(path = path, color = oppPrimary)
@@ -2101,21 +2810,21 @@ private fun DrawScope.drawHighwayRacersAndTraffic(
                 // Rider Back, Helmet & Leathers
                 drawOval(
                     color = Color(0xFF0F172A),
-                    topLeft = Offset(-10f + oppLean * 0.6f, -16f),
-                    size = Size(20f, 22f)
+                    topLeft = Offset(-13f + oppLean * 0.6f, -20f),
+                    size = Size(26f, 28f)
                 )
                 drawCircle(
                     color = oppSecondary,
-                    radius = 6.5f,
-                    center = Offset(0f + oppLean * 0.9f, -14f)
+                    radius = 8.5f,
+                    center = Offset(0f + oppLean * 0.9f, -18f)
                 )
 
                 // Glowing LED Taillight
                 drawRoundRect(
                     color = Color(0xFFFF1744),
-                    topLeft = Offset(-6f + oppLean * 0.3f, 10f),
-                    size = Size(12f, 4.5f),
-                    cornerRadius = CornerRadius(2f, 2f)
+                    topLeft = Offset(-8f + oppLean * 0.3f, 12f),
+                    size = Size(16f, 5.5f),
+                    cornerRadius = CornerRadius(2.5f, 2.5f)
                 )
             }
         }
@@ -2172,7 +2881,29 @@ private fun DrawScope.drawRealistic3DSuperbikeAndRider(
         translate(left = bikeX, top = bikeY + bounceY + pitchSquatY)
         scale(scaleX = bikeScale, scaleY = bikeScale, pivot = Offset.Zero)
     }) {
-        // 0. Soft Asphalt Contact Shadow
+        // 0. Dynamic Neon Underglow Ground Projection (Pulsating chassis neon with road contact glow)
+        val underglowPulse = 0.82f + 0.18f * sin(System.currentTimeMillis() * 0.007f)
+        val underglowColor = if (isNitro) Color(0xFF00F0FF) else Color(player.underglowColorHex)
+        val underglowSecondary = if (isNitro) Color(0xFFD500F9) else bikeSecondary
+        val underglowWidth = if (isNitro) 78f else 64f
+        val underglowHeight = if (isNitro) 36f else 28f
+        val underglowLeanShift = leanOffset * 0.55f // Casts out wide on the inside of turns
+
+        drawOval(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    underglowColor.copy(alpha = 0.80f * underglowPulse),
+                    underglowSecondary.copy(alpha = 0.40f * underglowPulse),
+                    Color.Transparent
+                ),
+                center = Offset(underglowLeanShift, 6f),
+                radius = underglowWidth * 0.65f
+            ),
+            topLeft = Offset(-underglowWidth / 2f + underglowLeanShift, -underglowHeight / 2f + 6f),
+            size = Size(underglowWidth, underglowHeight)
+        )
+
+        // 0.1 Soft Asphalt Contact Shadow
         drawOval(
             color = Color.Black.copy(alpha = 0.7f),
             topLeft = Offset(-28f + leanOffset * 0.3f, -8f),
@@ -2222,6 +2953,14 @@ private fun DrawScope.drawRealistic3DSuperbikeAndRider(
             topLeft = Offset(-8.5f + leanOffset * 0.25f, -6f),
             size = Size(17f, 34f),
             cornerRadius = CornerRadius(5.5f, 5.5f)
+        )
+        // Neon Rim Tape on Rear Wheel
+        drawRoundRect(
+            color = Color(player.rimTapeColorHex).copy(alpha = 0.85f),
+            topLeft = Offset(-8.5f + leanOffset * 0.25f, -6f),
+            size = Size(17f, 34f),
+            cornerRadius = CornerRadius(5.5f, 5.5f),
+            style = Stroke(width = 1.3f)
         )
         // 3D Directional Tire Tread Grooves
         val treadOffset = (System.currentTimeMillis() * player.speedKmh * 0.006f) % 8f
@@ -2306,6 +3045,27 @@ private fun DrawScope.drawRealistic3DSuperbikeAndRider(
         }
         drawPath(path = tailPath, brush = galaxyBodyBrush)
 
+        // Custom Neon Vinyl Decal Accents on Tail Cowl
+        drawBikeVinylAccents(
+            style = player.vinylAccentStyle,
+            primaryColor = bikePrimary,
+            accentColor = bikeSecondary,
+            centerX = leanOffset * 0.42f,
+            centerY = -18f,
+            width = 26f,
+            height = 18f
+        )
+
+        // Racing Badge Number Plate on Tail Cowl
+        drawRacingNumberBadge(
+            number = player.racingNumber,
+            primaryColor = bikePrimary,
+            accentColor = bikeSecondary,
+            badgeX = leanOffset * 0.42f,
+            badgeY = -18f,
+            size = 11f
+        )
+
         // Neon Tail Accents & Downforce Winglets
         drawLine(
             color = GalaxyCyan,
@@ -2375,6 +3135,14 @@ private fun DrawScope.drawRealistic3DSuperbikeAndRider(
             topLeft = Offset(frontWheelX - 5.5f, frontWheelY),
             size = Size(11f, 26f),
             cornerRadius = CornerRadius(4.5f, 4.5f)
+        )
+        // Neon Rim Tape on Front Wheel
+        drawRoundRect(
+            color = Color(player.rimTapeColorHex).copy(alpha = 0.85f),
+            topLeft = Offset(frontWheelX - 5.5f, frontWheelY),
+            size = Size(11f, 26f),
+            cornerRadius = CornerRadius(4.5f, 4.5f),
+            style = Stroke(width = 1.1f)
         )
         val frontTreadOffset = (System.currentTimeMillis() * player.speedKmh * 0.006f) % 7f
         for (i in 0..3) {
@@ -2456,6 +3224,16 @@ private fun DrawScope.drawRealistic3DSuperbikeAndRider(
             topLeft = Offset(-13f + cowlLean, -39f),
             size = Size(26f, 17f),
             cornerRadius = CornerRadius(3f, 3f)
+        )
+        // Neon Vinyl Decals on Front Cowl
+        drawBikeVinylAccents(
+            style = player.vinylAccentStyle,
+            primaryColor = bikePrimary,
+            accentColor = bikeSecondary,
+            centerX = cowlLean,
+            centerY = -31f,
+            width = 22f,
+            height = 12f
         )
         // Aerodynamic Smoked Bubble Windscreen
         drawRoundRect(
@@ -2636,6 +3414,13 @@ private fun DrawScope.drawRealistic3DSuperbikeAndRider(
         // Outer Shell
         drawCircle(color = Color(0xFF0F0C1E), radius = 13.8f, center = Offset(helmetX, helmetY))
         drawCircle(brush = galaxyBodyBrush, radius = 12.2f, center = Offset(helmetX, helmetY))
+        // Helmet Neon Vinyl Accent
+        drawHelmetVinylGraphic(
+            style = player.vinylAccentStyle,
+            accentColor = bikeSecondary,
+            center = Offset(helmetX, helmetY),
+            radius = 11f
+        )
         // Rear spoiler / teardrop diffuser
         drawPath(
             path = Path().apply {
@@ -2724,6 +3509,415 @@ private fun DrawScope.drawRealistic3DSuperbikeAndRider(
             size = Size(6f, 5f),
             cornerRadius = CornerRadius(1.5f, 1.5f)
         )
+    }
+}
+
+/**
+ * Renders custom neon vinyl decal accents onto the bike chassis.
+ */
+private fun DrawScope.drawBikeVinylAccents(
+    style: String,
+    primaryColor: Color,
+    accentColor: Color,
+    centerX: Float,
+    centerY: Float,
+    width: Float,
+    height: Float
+) {
+    val halfW = width / 2f
+    val halfH = height / 2f
+    val normalizedStyle = style.uppercase().replace(" ", "_")
+
+    when {
+        normalizedStyle.contains("FLAME") -> {
+            // "CYBER_FLAMES": Jagged upward-licking neon flame tongues
+            val flamePath = Path().apply {
+                moveTo(centerX - halfW * 0.75f, centerY + halfH * 0.8f)
+                // Left flame tongue
+                quadraticBezierTo(
+                    centerX - halfW * 0.9f, centerY - halfH * 0.2f,
+                    centerX - halfW * 0.5f, centerY - halfH * 0.85f
+                )
+                quadraticBezierTo(
+                    centerX - halfW * 0.35f, centerY - halfH * 0.1f,
+                    centerX - halfW * 0.2f, centerY + halfH * 0.1f
+                )
+                // Tall center flame tongue
+                quadraticBezierTo(
+                    centerX, centerY - halfH * 0.5f,
+                    centerX, centerY - halfH * 0.98f
+                )
+                quadraticBezierTo(
+                    centerX + halfW * 0.2f, centerY - halfH * 0.1f,
+                    centerX + halfW * 0.35f, centerY + halfH * 0.1f
+                )
+                // Right flame tongue
+                quadraticBezierTo(
+                    centerX + halfW * 0.5f, centerY - halfH * 0.1f,
+                    centerX + halfW * 0.5f, centerY - halfH * 0.85f
+                )
+                quadraticBezierTo(
+                    centerX + halfW * 0.9f, centerY - halfH * 0.2f,
+                    centerX + halfW * 0.75f, centerY + halfH * 0.8f
+                )
+                close()
+            }
+            // Fiery gradient fill
+            drawPath(
+                path = flamePath,
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color.White, accentColor, accentColor.copy(alpha = 0.3f)),
+                    startY = centerY - halfH,
+                    endY = centerY + halfH
+                )
+            )
+            // Hot neon edge trace
+            drawPath(
+                path = flamePath,
+                color = Color.White.copy(alpha = 0.85f),
+                style = Stroke(width = 0.9f)
+            )
+        }
+        normalizedStyle.contains("CIRCUIT") -> {
+            // "NEON_CIRCUIT": High-tech cybernetic logic traces with glowing micro-pads
+            // Center main trace
+            drawLine(
+                color = accentColor,
+                start = Offset(centerX, centerY - halfH * 0.8f),
+                end = Offset(centerX, centerY + halfH * 0.8f),
+                strokeWidth = 1.6f
+            )
+            // Left 45-degree angled trace
+            drawLine(
+                color = accentColor,
+                start = Offset(centerX - halfW * 0.7f, centerY + halfH * 0.5f),
+                end = Offset(centerX - halfW * 0.3f, centerY + halfH * 0.5f),
+                strokeWidth = 1.4f
+            )
+            drawLine(
+                color = accentColor,
+                start = Offset(centerX - halfW * 0.3f, centerY + halfH * 0.5f),
+                end = Offset(centerX, centerY + halfH * 0.2f),
+                strokeWidth = 1.4f
+            )
+            // Right 45-degree angled trace
+            drawLine(
+                color = accentColor,
+                start = Offset(centerX + halfW * 0.7f, centerY - halfH * 0.4f),
+                end = Offset(centerX + halfW * 0.3f, centerY - halfH * 0.4f),
+                strokeWidth = 1.4f
+            )
+            drawLine(
+                color = accentColor,
+                start = Offset(centerX + halfW * 0.3f, centerY - halfH * 0.4f),
+                end = Offset(centerX, centerY - halfH * 0.1f),
+                strokeWidth = 1.4f
+            )
+            // Glowing circuit solder pads
+            drawCircle(color = Color.White, radius = 1.6f, center = Offset(centerX - halfW * 0.7f, centerY + halfH * 0.5f))
+            drawCircle(color = accentColor, radius = 2.4f, center = Offset(centerX - halfW * 0.7f, centerY + halfH * 0.5f), style = Stroke(width = 0.8f))
+            drawCircle(color = Color.White, radius = 1.6f, center = Offset(centerX + halfW * 0.7f, centerY - halfH * 0.4f))
+            drawCircle(color = accentColor, radius = 2.4f, center = Offset(centerX + halfW * 0.7f, centerY - halfH * 0.4f), style = Stroke(width = 0.8f))
+            drawCircle(color = primaryColor, radius = 2f, center = Offset(centerX, centerY - halfH * 0.8f))
+        }
+        normalizedStyle.contains("STRIPE") -> {
+            // "APEX_STRIPES": Dual bold aerodynamic racing twin-stripes with contrasting pinstripe edges
+            val stripeW = halfW * 0.28f
+            val gap = halfW * 0.12f
+            // Left stripe
+            drawRoundRect(
+                color = accentColor,
+                topLeft = Offset(centerX - gap - stripeW, centerY - halfH * 0.9f),
+                size = Size(stripeW, height * 0.9f),
+                cornerRadius = CornerRadius(1f, 1f)
+            )
+            // Right stripe
+            drawRoundRect(
+                color = accentColor,
+                topLeft = Offset(centerX + gap, centerY - halfH * 0.9f),
+                size = Size(stripeW, height * 0.9f),
+                cornerRadius = CornerRadius(1f, 1f)
+            )
+            // Outer contrasting high-speed pinstripes
+            drawLine(
+                color = Color.White.copy(alpha = 0.9f),
+                start = Offset(centerX - gap - stripeW - 1.5f, centerY - halfH * 0.9f),
+                end = Offset(centerX - gap - stripeW - 1.5f, centerY + halfH * 0.9f),
+                strokeWidth = 0.8f
+            )
+            drawLine(
+                color = Color.White.copy(alpha = 0.9f),
+                start = Offset(centerX + gap + stripeW + 1.5f, centerY - halfH * 0.9f),
+                end = Offset(centerX + gap + stripeW + 1.5f, centerY + halfH * 0.9f),
+                strokeWidth = 0.8f
+            )
+        }
+        normalizedStyle.contains("DRIFT") || normalizedStyle.contains("TOKYO") -> {
+            // "TOKYO_DRIFT": Aggressive razor-sharp geometric aerodynamic slashes
+            for (i in -1..1) {
+                val shiftX = i * (halfW * 0.5f)
+                val slashPath = Path().apply {
+                    moveTo(centerX + shiftX - 4f, centerY - halfH * 0.6f + (i * 2f))
+                    lineTo(centerX + shiftX + 2f, centerY - halfH * 0.8f + (i * 2f))
+                    lineTo(centerX + shiftX + 4f, centerY + halfH * 0.6f + (i * 2f))
+                    lineTo(centerX + shiftX - 2f, centerY + halfH * 0.8f + (i * 2f))
+                    close()
+                }
+                drawPath(path = slashPath, color = accentColor)
+                drawPath(path = slashPath, color = Color.White.copy(alpha = 0.8f), style = Stroke(width = 0.7f))
+            }
+        }
+        else -> {
+            // "STEALTH_CLEAN": Ultra-sleek minimalist pinlines
+            drawLine(
+                color = accentColor.copy(alpha = 0.85f),
+                start = Offset(centerX - halfW * 0.8f, centerY),
+                end = Offset(centerX + halfW * 0.8f, centerY),
+                strokeWidth = 1.0f
+            )
+            drawCircle(color = accentColor, radius = 1.5f, center = Offset(centerX, centerY))
+        }
+    }
+}
+
+/**
+ * Renders custom neon vinyl decal accents onto the rider helmet shell.
+ */
+private fun DrawScope.drawHelmetVinylGraphic(
+    style: String,
+    accentColor: Color,
+    center: Offset,
+    radius: Float
+) {
+    val normalizedStyle = style.uppercase().replace(" ", "_")
+    when {
+        normalizedStyle.contains("FLAME") -> {
+            // Crown flames on helmet shell
+            val flamePath = Path().apply {
+                moveTo(center.x - radius * 0.6f, center.y + radius * 0.2f)
+                quadraticBezierTo(center.x - radius * 0.4f, center.y - radius * 0.6f, center.x - radius * 0.25f, center.y - radius * 0.85f)
+                quadraticBezierTo(center.x, center.y - radius * 0.3f, center.x, center.y - radius * 0.95f)
+                quadraticBezierTo(center.x + radius * 0.25f, center.y - radius * 0.3f, center.x + radius * 0.25f, center.y - radius * 0.85f)
+                quadraticBezierTo(center.x + radius * 0.4f, center.y - radius * 0.6f, center.x + radius * 0.6f, center.y + radius * 0.2f)
+                close()
+            }
+            drawPath(path = flamePath, color = accentColor.copy(alpha = 0.8f))
+            drawPath(path = flamePath, color = Color.White.copy(alpha = 0.9f), style = Stroke(width = 0.8f))
+        }
+        normalizedStyle.contains("STRIPE") -> {
+            // Dual racing stripes over helmet dome
+            drawLine(
+                color = accentColor,
+                start = Offset(center.x - 2.5f, center.y - radius * 0.9f),
+                end = Offset(center.x - 2.5f, center.y + radius * 0.6f),
+                strokeWidth = 2.0f
+            )
+            drawLine(
+                color = accentColor,
+                start = Offset(center.x + 2.5f, center.y - radius * 0.9f),
+                end = Offset(center.x + 2.5f, center.y + radius * 0.6f),
+                strokeWidth = 2.0f
+            )
+        }
+        normalizedStyle.contains("CIRCUIT") -> {
+            // Circuit nodes on helmet
+            drawLine(color = accentColor, start = Offset(center.x - radius * 0.5f, center.y - radius * 0.4f), end = Offset(center.x, center.y - radius * 0.7f), strokeWidth = 1.2f)
+            drawLine(color = accentColor, start = Offset(center.x, center.y - radius * 0.7f), end = Offset(center.x + radius * 0.5f, center.y - radius * 0.4f), strokeWidth = 1.2f)
+            drawCircle(color = Color.White, radius = 1.5f, center = Offset(center.x, center.y - radius * 0.7f))
+        }
+        else -> {
+            // Sleek aerodynamic accent arc
+            drawArc(
+                color = accentColor.copy(alpha = 0.8f),
+                startAngle = 200f,
+                sweepAngle = 140f,
+                useCenter = false,
+                topLeft = Offset(center.x - radius * 0.75f, center.y - radius * 0.9f),
+                size = Size(radius * 1.5f, radius * 1.5f),
+                style = Stroke(width = 1.2f)
+            )
+        }
+    }
+}
+
+/**
+ * Draws the high-visibility racing badge number plate.
+ */
+private fun DrawScope.drawRacingNumberBadge(
+    number: String,
+    primaryColor: Color,
+    accentColor: Color,
+    badgeX: Float,
+    badgeY: Float,
+    size: Float = 11f
+) {
+    val plateW = size * 1.55f
+    val plateH = size * 0.95f
+    // High-tech hexagonal/cut-corner racing number plate
+    val platePath = Path().apply {
+        moveTo(badgeX - plateW / 2f + 2f, badgeY - plateH / 2f)
+        lineTo(badgeX + plateW / 2f - 2f, badgeY - plateH / 2f)
+        lineTo(badgeX + plateW / 2f, badgeY)
+        lineTo(badgeX + plateW / 2f - 2f, badgeY + plateH / 2f)
+        lineTo(badgeX - plateW / 2f + 2f, badgeY + plateH / 2f)
+        lineTo(badgeX - plateW / 2f, badgeY)
+        close()
+    }
+    // Carbon/dark plate base
+    drawPath(path = platePath, color = Color(0xFF090A12))
+    // Glowing accent border
+    drawPath(path = platePath, color = accentColor, style = Stroke(width = 1.0f))
+
+    // Draw the 1 or 2 digits of the racing number
+    val cleanNum = if (number.length <= 2) number else number.take(2)
+    val digitCount = cleanNum.length
+    val charW = (plateW * 0.35f).coerceAtMost(size * 0.42f)
+    val charH = plateH * 0.65f
+    val totalCharsW = digitCount * charW + (digitCount - 1) * 2f
+    val startX = badgeX - totalCharsW / 2f
+
+    for (i in cleanNum.indices) {
+        val dx = startX + (i * (charW + 2f))
+        val dy = badgeY - charH / 2f
+        drawVectorDigit(cleanNum[i], dx, dy, charW, charH, Color.White, accentColor)
+    }
+}
+
+/**
+ * Draws crisp geometric high-speed racing digits.
+ */
+private fun DrawScope.drawVectorDigit(
+    char: Char,
+    x: Float,
+    y: Float,
+    w: Float,
+    h: Float,
+    digitColor: Color,
+    shadowColor: Color
+) {
+    val strokeW = (w * 0.28f).coerceIn(1.0f, 2.2f)
+    val halfH = h / 2f
+
+    // Subtle drop shadow
+    drawDigitSegments(char, x + 0.5f, y + 0.5f, w, h, halfH, shadowColor.copy(alpha = 0.6f), strokeW)
+    // Main sharp crisp white digit
+    drawDigitSegments(char, x, y, w, h, halfH, digitColor, strokeW)
+}
+
+private fun DrawScope.drawDigitSegments(
+    char: Char,
+    x: Float,
+    y: Float,
+    w: Float,
+    h: Float,
+    halfH: Float,
+    color: Color,
+    strokeW: Float
+) {
+    when (char) {
+        '0' -> {
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(x, y),
+                size = Size(w, h),
+                cornerRadius = CornerRadius(w * 0.25f, w * 0.25f),
+                style = Stroke(width = strokeW)
+            )
+        }
+        '1' -> {
+            drawLine(color = color, start = Offset(x + w * 0.6f, y), end = Offset(x + w * 0.6f, y + h), strokeWidth = strokeW, cap = StrokeCap.Round)
+            drawLine(color = color, start = Offset(x + w * 0.2f, y + h * 0.25f), end = Offset(x + w * 0.6f, y), strokeWidth = strokeW, cap = StrokeCap.Round)
+        }
+        '2' -> {
+            val p = Path().apply {
+                moveTo(x, y + h * 0.25f)
+                lineTo(x + w * 0.5f, y)
+                lineTo(x + w, y + h * 0.25f)
+                lineTo(x, y + h)
+                lineTo(x + w, y + h)
+            }
+            drawPath(path = p, color = color, style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        '3' -> {
+            val p = Path().apply {
+                moveTo(x, y)
+                lineTo(x + w, y)
+                lineTo(x + w * 0.4f, y + halfH)
+                lineTo(x + w, y + halfH + 1f)
+                lineTo(x + w, y + h)
+                lineTo(x, y + h)
+            }
+            drawPath(path = p, color = color, style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        '4' -> {
+            val p = Path().apply {
+                moveTo(x + w * 0.75f, y + h)
+                lineTo(x + w * 0.75f, y)
+                lineTo(x, y + halfH)
+                lineTo(x + w, y + halfH)
+            }
+            drawPath(path = p, color = color, style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        '5' -> {
+            val p = Path().apply {
+                moveTo(x + w, y)
+                lineTo(x, y)
+                lineTo(x, y + halfH)
+                lineTo(x + w, y + halfH)
+                lineTo(x + w, y + h)
+                lineTo(x, y + h)
+            }
+            drawPath(path = p, color = color, style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        '6' -> {
+            val p = Path().apply {
+                moveTo(x + w, y)
+                lineTo(x, y + halfH * 0.6f)
+                lineTo(x, y + h)
+                lineTo(x + w, y + h)
+                lineTo(x + w, y + halfH)
+                lineTo(x, y + halfH)
+            }
+            drawPath(path = p, color = color, style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        '7' -> {
+            val p = Path().apply {
+                moveTo(x, y)
+                lineTo(x + w, y)
+                lineTo(x + w * 0.25f, y + h)
+            }
+            drawPath(path = p, color = color, style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        '8' -> {
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(x, y),
+                size = Size(w, halfH + 0.5f),
+                cornerRadius = CornerRadius(w * 0.2f, w * 0.2f),
+                style = Stroke(width = strokeW)
+            )
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(x, y + halfH - 0.5f),
+                size = Size(w, halfH + 0.5f),
+                cornerRadius = CornerRadius(w * 0.2f, w * 0.2f),
+                style = Stroke(width = strokeW)
+            )
+        }
+        '9' -> {
+            val p = Path().apply {
+                moveTo(x + w, y + halfH)
+                lineTo(x, y + halfH)
+                lineTo(x, y)
+                lineTo(x + w, y)
+                lineTo(x + w, y + h)
+                lineTo(x, y + h)
+            }
+            drawPath(path = p, color = color, style = Stroke(width = strokeW, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+        else -> {
+            drawLine(color = color, start = Offset(x + w / 2f, y), end = Offset(x + w / 2f, y + h), strokeWidth = strokeW)
+        }
     }
 }
 
@@ -3184,6 +4378,486 @@ private fun DrawScope.drawActiveVisualParticles(
                     cornerRadius = CornerRadius(1.5f, 1.5f)
                 )
             }
+            ParticleVisualType.KNEE_SPARK -> {
+                // High-velocity titanium knee-slider scrape shower
+                val sparkLength = (p.size * 4.5f * (1f + (1f - lifeFraction))).coerceAtLeast(6f)
+                val sparkColor = p.color.copy(alpha = alpha)
+                val coreColor = Color.White.copy(alpha = alpha)
+
+                // Fiery molten titanium streak
+                drawLine(
+                    color = sparkColor,
+                    start = Offset(screenX, screenY),
+                    end = Offset(screenX - (p.vx * 0.045f), screenY - (p.vy * 0.045f)),
+                    strokeWidth = p.size * 1.2f,
+                    cap = StrokeCap.Round
+                )
+                // Incandescent core spark
+                drawCircle(
+                    color = coreColor,
+                    radius = (p.size * 0.6f).coerceAtLeast(1.8f),
+                    center = Offset(screenX, screenY)
+                )
+            }
+            ParticleVisualType.ROOSTER_TAIL -> {
+                // High-speed wet asphalt water mist rooster-tail spray
+                val sprayRadius = p.size * (1f + (1f - lifeFraction) * 2.2f)
+                val sprayAlpha = (alpha * 0.55f).coerceIn(0f, 1f)
+                drawOval(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            p.color.copy(alpha = sprayAlpha),
+                            p.color.copy(alpha = sprayAlpha * 0.4f),
+                            Color.Transparent
+                        ),
+                        center = Offset(screenX, screenY),
+                        radius = sprayRadius
+                    ),
+                    topLeft = Offset(screenX - sprayRadius * 0.8f, screenY - sprayRadius * 0.5f),
+                    size = Size(sprayRadius * 1.6f, sprayRadius * 1.0f)
+                )
+            }
+            ParticleVisualType.ELECTRIC_ARC -> {
+                // Crackling high-voltage cyan/gold electric arc discharges
+                val arcColor = p.color.copy(alpha = alpha)
+                val arcCore = Color.White.copy(alpha = alpha)
+                val arcLen = p.size * 5f
+                val midX = screenX + (p.vx * 0.02f) + ((p.rotation % 7f) - 3.5f) * 4f
+                val midY = screenY + (p.vy * 0.02f) + ((p.rotation % 5f) - 2.5f) * 4f
+                val endX = screenX + (p.vx * 0.045f)
+                val endY = screenY + (p.vy * 0.045f)
+
+                // Arc line 1
+                drawLine(
+                    color = arcColor,
+                    start = Offset(screenX, screenY),
+                    end = Offset(midX, midY),
+                    strokeWidth = 2.2f,
+                    cap = StrokeCap.Round
+                )
+                // Arc line 2
+                drawLine(
+                    color = arcColor,
+                    start = Offset(midX, midY),
+                    end = Offset(endX, endY),
+                    strokeWidth = 1.8f,
+                    cap = StrokeCap.Round
+                )
+                // Bright ionization node
+                drawCircle(
+                    color = arcCore,
+                    radius = 2.0f,
+                    center = Offset(midX, midY)
+                )
+            }
+            ParticleVisualType.HEAT_DISTORTION -> {
+                // Rising heat shimmering mirage wave
+                val waveRadius = p.size
+                val waveAlpha = (alpha * 0.25f).coerceIn(0f, 1f)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = waveAlpha),
+                            Color(0xFF00F0FF).copy(alpha = waveAlpha * 0.3f),
+                            Color.Transparent
+                        ),
+                        center = Offset(screenX, screenY),
+                        radius = waveRadius
+                    ),
+                    radius = waveRadius,
+                    center = Offset(screenX, screenY)
+                )
+            }
+            ParticleVisualType.ROADSIDE_DUST -> {
+                // Billowing aerodynamic roadside dust cloud & swirling loam vortex
+                val dustRadius = p.size * (1.1f + (1f - lifeFraction) * 1.5f)
+                val dustAlpha = (alpha * 0.38f).coerceIn(0f, 1f)
+                drawOval(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            p.color.copy(alpha = dustAlpha),
+                            p.color.copy(alpha = dustAlpha * 0.5f),
+                            p.color.copy(alpha = dustAlpha * 0.15f),
+                            Color.Transparent
+                        ),
+                        center = Offset(screenX, screenY),
+                        radius = dustRadius
+                    ),
+                    topLeft = Offset(screenX - dustRadius * 1.1f, screenY - dustRadius * 0.7f),
+                    size = Size(dustRadius * 2.2f, dustRadius * 1.4f)
+                )
+                // Subtle central dust spec
+                drawCircle(
+                    color = p.color.copy(alpha = dustAlpha * 0.7f),
+                    radius = (dustRadius * 0.18f).coerceIn(1.2f, 3.5f),
+                    center = Offset(screenX, screenY)
+                )
+            }
+            ParticleVisualType.ROADSIDE_DEBRIS -> {
+                // 3D Tumbling asphalt pebble / gravel fragment with ambient shadow
+                val pebbleSize = p.size
+                val pebbleAlpha = (alpha * 0.9f).coerceIn(0f, 1f)
+                val debrisColor = p.color.copy(alpha = pebbleAlpha)
+                val highlightColor = Color.White.copy(alpha = pebbleAlpha * 0.35f)
+
+                // Shadow underneath
+                drawOval(
+                    color = Color.Black.copy(alpha = pebbleAlpha * 0.25f),
+                    topLeft = Offset(screenX - pebbleSize * 0.7f, screenY + pebbleSize * 0.4f),
+                    size = Size(pebbleSize * 1.4f, pebbleSize * 0.6f)
+                )
+
+                // Rotated faceted pebble geometry
+                drawRoundRect(
+                    color = debrisColor,
+                    topLeft = Offset(screenX - pebbleSize / 2f, screenY - pebbleSize / 2f),
+                    size = Size(pebbleSize, pebbleSize * 0.8f),
+                    cornerRadius = CornerRadius(pebbleSize * 0.25f, pebbleSize * 0.25f)
+                )
+
+                // Specular edge glint
+                drawCircle(
+                    color = highlightColor,
+                    radius = pebbleSize * 0.2f,
+                    center = Offset(screenX - pebbleSize * 0.2f, screenY - pebbleSize * 0.2f)
+                )
+            }
         }
     }
+}
+
+/**
+ * 9. High-Speed Camera FOV Radial Chromatic Aberration & Lens Dispersion Vignette
+ * Simulates optical prism dispersion where extreme nitro acceleration separates light
+ * into cyan and magenta wavelengths towards the perimeter of the screen, combined with a dynamic speed tunnel vignette.
+ */
+private fun DrawScope.drawNitroChromaticAberration(
+    width: Float,
+    height: Float,
+    vanishingX: Float,
+    horizonY: Float,
+    warpIntensity: Float,
+    timeSec: Float
+) {
+    val center = Offset(vanishingX, horizonY)
+    val maxRadius = hypot(width, height) * 0.75f
+
+    // 1. Radial Chromatic Split Vignette
+    // Outer edge cyan channel flare
+    val cyanFringeBrush = Brush.radialGradient(
+        colors = listOf(
+            Color.Transparent,
+            Color.Transparent,
+            Color(0xFF00E5FF).copy(alpha = 0.08f * warpIntensity),
+            Color(0xFF00E5FF).copy(alpha = 0.28f * warpIntensity)
+        ),
+        center = center,
+        radius = maxRadius
+    )
+    drawRect(brush = cyanFringeBrush)
+
+    // Tangential offset magenta channel flare (creates the optical prism separation)
+    val magentaOffset = Offset(vanishingX + 10f * warpIntensity, horizonY - 5f * warpIntensity)
+    val magentaFringeBrush = Brush.radialGradient(
+        colors = listOf(
+            Color.Transparent,
+            Color.Transparent,
+            Color(0xFFFF007F).copy(alpha = 0.09f * warpIntensity),
+            Color(0xFFFF0055).copy(alpha = 0.32f * warpIntensity)
+        ),
+        center = magentaOffset,
+        radius = maxRadius * 0.96f
+    )
+    drawRect(brush = magentaFringeBrush)
+
+    // 2. High-G Speed Tunnel Edge Darkening (Focuses visual depth directly down the highway)
+    val tunnelVignetteBrush = Brush.radialGradient(
+        colors = listOf(
+            Color.Transparent,
+            Color.Transparent,
+            Color.Black.copy(alpha = 0.15f * warpIntensity),
+            Color.Black.copy(alpha = 0.52f * warpIntensity)
+        ),
+        center = center,
+        radius = maxRadius * 0.92f
+    )
+    drawRect(brush = tunnelVignetteBrush)
+
+    // 3. Radial Prismatic Light Dispersion Streaks (Perimeter Light Rays)
+    val rayCount = 16
+    for (r in 0 until rayCount) {
+        val angleRad = (r * (360f / rayCount) + (timeSec * 45f)) * (PI / 180f).toFloat()
+        val dirX = cos(angleRad)
+        val dirY = sin(angleRad)
+
+        val innerDist = maxRadius * (0.50f + (r % 3) * 0.08f)
+        val outerDist = maxRadius * 1.05f
+
+        val startX = vanishingX + dirX * innerDist
+        val startY = horizonY + dirY * innerDist
+        val endX = vanishingX + dirX * outerDist
+        val endY = horizonY + dirY * outerDist
+
+        // Cyan sub-channel ray
+        drawLine(
+            color = Color(0xFF00E5FF).copy(alpha = 0.25f * warpIntensity),
+            start = Offset(startX - 3.5f, startY),
+            end = Offset(endX - 3.5f, endY),
+            strokeWidth = 2.5f * warpIntensity,
+            cap = StrokeCap.Round
+        )
+
+        // Magenta sub-channel ray
+        drawLine(
+            color = Color(0xFFFF007F).copy(alpha = 0.28f * warpIntensity),
+            start = Offset(startX + 3.5f, startY),
+            end = Offset(endX + 3.5f, endY),
+            strokeWidth = 2.5f * warpIntensity,
+            cap = StrokeCap.Round
+        )
+
+        // Intense central white optical core
+        drawLine(
+            color = Color.White.copy(alpha = 0.38f * warpIntensity),
+            start = Offset(startX, startY),
+            end = Offset(endX, endY),
+            strokeWidth = 1.4f * warpIntensity,
+            cap = StrokeCap.Round
+        )
+    }
+}
+
+/**
+ * 10. Moody Cinematic Atmospheric Filter & High-Octane Lens Post-Processing
+ * Implements:
+ * - Moody Deep Teal-Shadow / Warm Specular Gold Tone Grading Filter
+ * - Anamorphic Horizontal Cinema Streak Lens Flare with Optical Glints
+ * - Wet Asphalt Mirror Road Puddle Specular Sheen & Underglow Ground Reflection
+ * - Low-Hanging Volumetric Nocturnal Road Fog & Heat Shimmer Grid
+ * - Cinema Letterbox & High-Dynamic Radial Depth Vignette
+ */
+private fun DrawScope.drawMoodyCinematicPostProcessing(
+    width: Float,
+    height: Float,
+    vanishingX: Float,
+    horizonY: Float,
+    bikeCenterX: Float,
+    bikeCenterY: Float,
+    playerSpeed: Float,
+    isNitro: Boolean,
+    timeSec: Float,
+    isTurbina: Boolean
+) {
+    val speedRatio = (playerSpeed / 300f).coerceIn(0f, 1f)
+
+    // 1. Moody Deep Teal / Cyber Twilight Atmospheric Color Grade
+    // Simulates an ARRI / cinematic look LUT with deep cyan/teal shadows and preserved highlight contrast
+    val cinematicGradeBrush = Brush.verticalGradient(
+        colors = listOf(
+            Color(0x220A1A24), // Twilight dark teal at the sky
+            Color(0x110B2530), // Mid atmospheric fog
+            Color(0x2804151C), // Road shadow tone
+            Color(0x38020B10)  // Deep asphalt base
+        ),
+        startY = 0f,
+        endY = height
+    )
+    drawRect(brush = cinematicGradeBrush)
+
+    // 2. Wet Highway Asphalt Ground Specular Sheen & Neon Underglow Reflections
+    // Dynamic wet road reflection streak directly below the player superbike
+    val reflectionWidth = if (isTurbina) 120f else 95f
+    val reflectionLength = height * 0.38f
+    val underglowColor = if (isTurbina) Color(0xFF00F0FF) else if (isNitro) Color(0xFF00E5FF) else Color(0xFFFFD600)
+    val taillightColor = Color(0xFFFF1744)
+
+    // Underglow wet pavement puddle reflection
+    val wetGroundReflectionBrush = Brush.verticalGradient(
+        colors = listOf(
+            underglowColor.copy(alpha = if (isNitro) 0.55f else 0.32f),
+            underglowColor.copy(alpha = if (isNitro) 0.25f else 0.14f),
+            taillightColor.copy(alpha = 0.18f),
+            Color.Transparent
+        ),
+        startY = bikeCenterY + 15f,
+        endY = (bikeCenterY + reflectionLength).coerceAtMost(height)
+    )
+    drawOval(
+        brush = wetGroundReflectionBrush,
+        topLeft = Offset(bikeCenterX - (reflectionWidth * 0.5f), bikeCenterY + 12f),
+        size = Size(reflectionWidth, reflectionLength)
+    )
+
+    // Micro wet pavement specular shimmer lines along the road perspective
+    val shimmerLineCount = 8
+    for (i in 0 until shimmerLineCount) {
+        val lineY = bikeCenterY + 25f + (i * 18f)
+        if (lineY > height) break
+        val jitterX = sin(timeSec * 8f + i) * 16f
+        val shimmerAlpha = (0.22f - (i * 0.02f)).coerceAtLeast(0.04f) * (1f + speedRatio * 0.5f)
+        val lineWidth = (reflectionWidth * (0.8f + i * 0.15f))
+
+        drawLine(
+            color = if (i % 2 == 0) underglowColor.copy(alpha = shimmerAlpha) else Color.White.copy(alpha = shimmerAlpha * 0.7f),
+            start = Offset(bikeCenterX - lineWidth / 2f + jitterX, lineY),
+            end = Offset(bikeCenterX + lineWidth / 2f + jitterX, lineY),
+            strokeWidth = if (i % 3 == 0) 2.5f else 1.2f,
+            cap = StrokeCap.Round
+        )
+    }
+
+    // 3. Low-Hanging Volumetric Nocturnal Road Mist & Atmospheric Fog
+    val fogBrush = Brush.verticalGradient(
+        colors = listOf(
+            Color.Transparent,
+            Color(0x180B797D), // Turbina teal mist
+            Color(0x2205161C),
+            Color.Transparent
+        ),
+        startY = horizonY - 20f,
+        endY = horizonY + height * 0.22f
+    )
+    drawRect(
+        brush = fogBrush,
+        topLeft = Offset(0f, horizonY - 20f),
+        size = Size(width, height * 0.25f)
+    )
+
+    // 4. Anamorphic Cinema Horizontal Light Streaks (JJ Abrams Style High-End Racing Lens Flare)
+    // Horizontal flare across the player bike taillight / underglow
+    val anamorphicIntensity = if (isNitro) 1.0f else (0.45f + speedRatio * 0.45f)
+    val flareY = bikeCenterY + 4f
+    val flareColor = if (isTurbina) Color(0xFF00F0FF) else Color(0xFF00E5FF)
+
+    val anamorphicFlareBrush = Brush.horizontalGradient(
+        colors = listOf(
+            Color.Transparent,
+            flareColor.copy(alpha = 0.08f * anamorphicIntensity),
+            flareColor.copy(alpha = 0.35f * anamorphicIntensity),
+            Color.White.copy(alpha = 0.75f * anamorphicIntensity),
+            flareColor.copy(alpha = 0.35f * anamorphicIntensity),
+            flareColor.copy(alpha = 0.08f * anamorphicIntensity),
+            Color.Transparent
+        ),
+        startX = 0f,
+        endX = width
+    )
+    drawLine(
+        brush = anamorphicFlareBrush,
+        start = Offset(0f, flareY),
+        end = Offset(width, flareY),
+        strokeWidth = if (isNitro) 3.5f else 2.0f,
+        cap = StrokeCap.Round
+    )
+
+    // Secondary warm amber / gold anamorphic streak for Turbina gold accents
+    if (isTurbina || isNitro) {
+        val goldFlareY = bikeCenterY - 14f
+        val goldFlareBrush = Brush.horizontalGradient(
+            colors = listOf(
+                Color.Transparent,
+                Color(0xFFFFD600).copy(alpha = 0.05f * anamorphicIntensity),
+                Color(0xFFFFD600).copy(alpha = 0.28f * anamorphicIntensity),
+                Color.White.copy(alpha = 0.65f * anamorphicIntensity),
+                Color(0xFFFFD600).copy(alpha = 0.28f * anamorphicIntensity),
+                Color(0xFFFFD600).copy(alpha = 0.05f * anamorphicIntensity),
+                Color.Transparent
+            ),
+            startX = width * 0.05f,
+            endX = width * 0.95f
+        )
+        drawLine(
+            brush = goldFlareBrush,
+            start = Offset(width * 0.05f, goldFlareY),
+            end = Offset(width * 0.95f, goldFlareY),
+            strokeWidth = 1.8f,
+            cap = StrokeCap.Round
+        )
+    }
+
+    // Optical Glint Star at the Core Light Node
+    val glintRadius = (if (isNitro) 18f else 11f) * (0.9f + sin(timeSec * 15f) * 0.1f)
+    val starColor = Color.White.copy(alpha = 0.85f * anamorphicIntensity)
+    val glowColor = flareColor.copy(alpha = 0.45f * anamorphicIntensity)
+
+    // Horizontal & vertical flare spokes
+    drawLine(
+        color = starColor,
+        start = Offset(bikeCenterX - glintRadius * 2.2f, flareY),
+        end = Offset(bikeCenterX + glintRadius * 2.2f, flareY),
+        strokeWidth = 2f,
+        cap = StrokeCap.Round
+    )
+    drawLine(
+        color = starColor,
+        start = Offset(bikeCenterX, flareY - glintRadius * 0.9f),
+        end = Offset(bikeCenterX, flareY + glintRadius * 0.9f),
+        strokeWidth = 1.8f,
+        cap = StrokeCap.Round
+    )
+    // Diagonal 45-deg optical glints
+    drawLine(
+        color = glowColor,
+        start = Offset(bikeCenterX - glintRadius * 0.8f, flareY - glintRadius * 0.8f),
+        end = Offset(bikeCenterX + glintRadius * 0.8f, flareY + glintRadius * 0.8f),
+        strokeWidth = 1.2f,
+        cap = StrokeCap.Round
+    )
+    drawLine(
+        color = glowColor,
+        start = Offset(bikeCenterX + glintRadius * 0.8f, flareY - glintRadius * 0.8f),
+        end = Offset(bikeCenterX - glintRadius * 0.8f, flareY + glintRadius * 0.8f),
+        strokeWidth = 1.2f,
+        cap = StrokeCap.Round
+    )
+    // Diamond center core
+    drawCircle(
+        color = Color.White,
+        radius = 3.5f * anamorphicIntensity,
+        center = Offset(bikeCenterX, flareY)
+    )
+
+    // 5. Cinematic Mood Radial Vignette (Emphasizes highway perspective depth)
+    val vignetteRadius = hypot(width, height) * 0.68f
+    val vignetteBrush = Brush.radialGradient(
+        colors = listOf(
+            Color.Transparent,
+            Color.Transparent,
+            Color(0x22020B10),
+            Color(0x66000508)
+        ),
+        center = Offset(vanishingX, horizonY + height * 0.25f),
+        radius = vignetteRadius
+    )
+    drawRect(brush = vignetteBrush)
+
+    // 6. Top and Bottom Cinematic Film Letterbox Edge Shadows
+    val letterboxHeight = height * 0.045f
+    val topLetterboxBrush = Brush.verticalGradient(
+        colors = listOf(
+            Color(0xCC000000),
+            Color.Transparent
+        ),
+        startY = 0f,
+        endY = letterboxHeight
+    )
+    drawRect(
+        brush = topLetterboxBrush,
+        topLeft = Offset(0f, 0f),
+        size = Size(width, letterboxHeight)
+    )
+
+    val bottomLetterboxBrush = Brush.verticalGradient(
+        colors = listOf(
+            Color.Transparent,
+            Color(0xD9000000)
+        ),
+        startY = height - letterboxHeight * 1.5f,
+        endY = height
+    )
+    drawRect(
+        brush = bottomLetterboxBrush,
+        topLeft = Offset(0f, height - letterboxHeight * 1.5f),
+        size = Size(width, letterboxHeight * 1.5f)
+    )
 }

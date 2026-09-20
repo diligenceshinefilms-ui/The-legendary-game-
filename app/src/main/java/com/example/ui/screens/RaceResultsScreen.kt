@@ -29,6 +29,7 @@ import com.example.ui.theme.*
 @Composable
 fun RaceResultsScreen(
     summary: RaceRewardSummary?,
+    onWatchReplay: () -> Unit = {},
     onRestartRace: () -> Unit,
     onGarage: () -> Unit,
     onHome: () -> Unit
@@ -238,6 +239,14 @@ fun RaceResultsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                NeonButton(
+                    text = "WATCH CINEMATIC REPLAY",
+                    icon = Icons.Default.Videocam,
+                    color = NeonOrange,
+                    onClick = onWatchReplay,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
                 NeonButton(
                     text = "RACE AGAIN",
                     icon = Icons.Default.Refresh,

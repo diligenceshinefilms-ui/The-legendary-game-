@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -59,6 +60,8 @@ fun RaceScreen(
     val missionFailReason by engine.missionFailReason.collectAsState()
     val nearMissBonus by engine.nearMissBonus.collectAsState()
     val nearMissCombo by engine.nearMissCombo.collectAsState()
+    val isDrafting by engine.isDrafting.collectAsState()
+    val draftIntensity by engine.draftIntensity.collectAsState()
 
     // Control Type selection (defaults to settings, quickly toggleable in-game)
     var activeControlType by remember(settings.controlType) { mutableStateOf(settings.controlType) }
@@ -171,6 +174,8 @@ fun RaceScreen(
             nearMissBonus = nearMissBonus,
             nearMissCombo = nearMissCombo,
             isFirstPersonCam = isFirstPersonCam,
+            isDrafting = isDrafting,
+            draftIntensity = draftIntensity,
             modifier = Modifier.fillMaxSize()
         )
 
@@ -322,12 +327,61 @@ fun RaceScreen(
                     modifier = Modifier.padding(bottom = 2.dp)
                 )
 
-                // Center: Speedometer HUD (Arched Rev Arc, Digital 248 KM/H, Nitro Bar)
-                ConceptCenterSpeedometer(
-                    speedKmh = playerRacer?.speedKmh ?: 0f,
-                    isNitroActive = (playerRacer?.isNitroActive == true) || isNitroPressed,
-                    nitroFuel = nitroFuel
-                )
+                // Center: Speedometer HUD (Arched Rev Arc, Digital 248 KM/H, Nitro Bar) with Dynamic Slipstream Badge
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isDrafting,
+                        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(),
+                        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut()
+                    ) {
+                        Surface(
+                            color = GalaxyVoid.copy(alpha = 0.94f),
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.5.dp,
+                                Brush.horizontalGradient(
+                                    listOf(NeonCyan, NitroPurple, NeonCyan)
+                                )
+                            ),
+                            shadowElevation = 6.dp,
+                            modifier = Modifier.testTag("slipstream_draft_badge")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "⚡ SLIPSTREAM DRAFT",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Black,
+                                        fontStyle = FontStyle.Italic,
+                                        color = NeonCyan,
+                                        fontSize = 8.5.sp,
+                                        letterSpacing = 0.5.sp
+                                    )
+                                )
+                                Text(
+                                    text = "+${(draftIntensity * 100).toInt()}% PULL",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Black,
+                                        color = ElectricYellow,
+                                        fontSize = 9.sp
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    ConceptCenterSpeedometer(
+                        speedKmh = playerRacer?.speedKmh ?: 0f,
+                        isNitroActive = (playerRacer?.isNitroActive == true) || isNitroPressed,
+                        nitroFuel = nitroFuel
+                    )
+                }
 
                 // Right: Active City Expressway Tag & Dynamic Glowing Gear Shift Indicator
                 Column(
@@ -427,7 +481,19 @@ fun RaceScreen(
                                     1.5.dp,
                                     if (kotlin.math.abs(tiltReading.steerValue) > 0.1f) NeonCyan else NeonOrange
                                 ),
-                                modifier = Modifier.testTag("motion_tilt_gauge")
+                                modifier = Modifier
+                                    .testTag("motion_tilt_gauge")
+                                    .pointerInput(Unit) {
+                                        detectTapGestures(
+                                            onPress = { offset ->
+                                                val halfWidth = size.width / 2f
+                                                val steer = ((offset.x - halfWidth) / halfWidth).coerceIn(-1f, 1f)
+                                                motionSensorManager.setManualTouchSteer(steer)
+                                                tryAwaitRelease()
+                                                motionSensorManager.setManualTouchSteer(0f)
+                                            }
+                                        )
+                                    }
                             ) {
                                 Column(
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -817,12 +883,12 @@ fun RaceScreen(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         NeonButton(
-                            text = "RETRY RUN",
+                            text = "TRY AGAIN",
                             icon = Icons.Default.Refresh,
                             color = NeonOrange,
                             isPrimary = true,
                             onClick = { engine.restart() },
-                            modifier = Modifier.fillMaxWidth().testTag("btn_retry_mission")
+                            modifier = Modifier.fillMaxWidth().testTag("btn_try_again")
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -887,6 +953,18 @@ data class FreeBikeDesignItem(
 )
 
 val FREE_BIKE_DESIGNS = listOf(
+    FreeBikeDesignItem(
+        id = "bike_turbina_electric",
+        name = "TURBINA Hyper-Electric EX-1",
+        category = "HYPER ELECTRIC",
+        topSpeedKmh = 350f,
+        primaryColorHex = 0xFF0B797D,
+        secondaryColorHex = 0xFFFFD600,
+        handlingMultiplier = 1.25f,
+        accelMultiplier = 1.35f,
+        badge = "8K CGI MASTER",
+        description = "Aerodynamic monocoque electric superbike in deep metallic teal with gold TURBINA decals, 3-loop trefoil rims & P ZERO tires."
+    ),
     FreeBikeDesignItem(
         id = "bike_galaxy_1000",
         name = "Galaxy Superbike 1000RR",

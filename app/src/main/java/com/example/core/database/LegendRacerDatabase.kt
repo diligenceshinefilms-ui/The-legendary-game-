@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
         Track::class,
         RaceResult::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class LegendRacerDatabase : RoomDatabase() {
@@ -176,6 +176,20 @@ abstract class LegendRacerDatabase : RoomDatabase() {
                 secondaryColorHex = 0xFFB0BEC5  // Polished Chrome
             ),
             BikeEntity(
+                id = "bike_turbina_electric",
+                name = "TURBINA Hyper-Electric EX-1",
+                description = "Photorealistic 8K flagship electric hyperbike in deep metallic teal (#0B797D), dark carbon fiber panels, gold TURBINA side fairing decals, custom 3-loop Turbina pattern wheel rims with P ZERO tires, integrated cyan LED light bar, and color-matched teal racing rider.",
+                baseTopSpeed = 330,
+                baseAcceleration = 100,
+                baseHandling = 99,
+                baseBraking = 98,
+                baseNitro = 100,
+                price = 0,
+                unlockLevel = 1,
+                primaryColorHex = 0xFF0B797D,   // Deep Metallic Teal #0B797D
+                secondaryColorHex = 0xFFFFD600  // Turbina Gold
+            ),
+            BikeEntity(
                 id = "bike_legend_x1",
                 name = "Legend X1 Sport",
                 description = "Balanced sportbike with agile cornering response and stable chassis.",
@@ -192,8 +206,9 @@ abstract class LegendRacerDatabase : RoomDatabase() {
         )
         bikeDao().insertBikes(bikes)
 
-        // Initial Player Bike Ownership - All 5 Types Free & Unlocked!
+        // Initial Player Bike Ownership - All 5+ Types Free & Unlocked!
         val playerBikes = listOf(
+            PlayerBikeEntity("pb_turbina", "guest_player_1", "bike_turbina_electric", unlocked = true, 1, 1, 1, 1, 1),
             PlayerBikeEntity("pb_0", "guest_player_1", "bike_galaxy_edition", unlocked = true, 1, 1, 1, 1, 1),
             PlayerBikeEntity("pb_1", "guest_player_1", "bike_streetfighter", unlocked = true, 1, 1, 1, 1, 1),
             PlayerBikeEntity("pb_2", "guest_player_1", "bike_hayabusa", unlocked = true, 1, 1, 1, 1, 1),

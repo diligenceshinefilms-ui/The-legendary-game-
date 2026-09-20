@@ -67,6 +67,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     val selectedTrack = MutableStateFlow<Track?>(null)
     val selectedBikeStats = MutableStateFlow<EffectiveBikeStats?>(null)
+    val playerLivery = MutableStateFlow(PlayerLivery())
 
     val gameSettings: StateFlow<GameSettings> = loadSettings()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), GameSettings())
@@ -82,9 +83,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     val dailyChallenge: StateFlow<DailyChallenge?> = getDailyChallenge()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    // Active Race Engine State
-    var activeEngine: GameEngine? = null
-        private set
+    // Active Race Engine State & Post-Race Replay Recording
+    private val _activeEngine = MutableStateFlow<GameEngine?>(null)
+    val activeEngine: StateFlow<GameEngine?> = _activeEngine.asStateFlow()
+
+    val lastRecordedReplay = MutableStateFlow<List<ReplayFrame>>(emptyList())
 
     private var raceLoopJob: Job? = null
     val lastRaceReward = MutableStateFlow<RaceRewardSummary?>(null)
@@ -127,6 +130,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updatePlayerLivery(livery: PlayerLivery) {
+        playerLivery.value = livery
+        _activeEngine.value?.updatePlayerLivery(livery)
+    }
+
+    fun saveBikeLivery(bikeId: String, livery: PlayerLivery) {
+        playerLivery.value = livery
+        _activeEngine.value?.updatePlayerLivery(livery)
+        audioManager.playClick()
+    }
+
     fun startRace(
         track: Track,
         bikeStats: EffectiveBikeStats,
@@ -142,9 +156,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             playerBikeStats = bikeStats,
             totalLaps = laps,
             mode = mode,
-            audioManager = audioManager
+            audioManager = audioManager,
+            playerLivery = playerLivery.value
         )
-        activeEngine = engine
+        _activeEngine.value = engine
 
         raceLoopJob = viewModelScope.launch {
             var lastTime = System.nanoTime()
@@ -164,6 +179,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         playerRepo.addDistanceKm(distKm)
                         leaderboardRepo.recordPlayerDistance(pId, distKm, topSpeed)
                     }
+                    lastRecordedReplay.value = engine.getRecordedReplayFrames()
                 }
 
                 // Check finish state
@@ -174,6 +190,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     val pId = player.value?.id ?: "guest_player_1"
                     val distKm = engine.totalDistanceMeters.value / 1000f
                     val topSpeed = engine.topSpeedKmh.value
+
+                    lastRecordedReplay.value = engine.getRecordedReplayFrames()
 
                     if (distKm > 0.02f) {
                         playerRepo.addDistanceKm(distKm)
@@ -224,7 +242,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updatePlayerInput(steer: Float, throttle: Float, brake: Float, nitro: Boolean) {
-        activeEngine?.playerInput = com.example.game.physics.BikeInput(
+        _activeEngine.value?.playerInput = com.example.game.physics.BikeInput(
             steer = steer,
             throttle = throttle,
             brake = brake,
@@ -233,26 +251,26 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun speedUp() {
-        activeEngine?.speedUp()
+        _activeEngine.value?.speedUp()
     }
 
     fun speedDown() {
-        activeEngine?.speedDown()
+        _activeEngine.value?.speedDown()
     }
 
     fun pauseRace() {
-        activeEngine?.pause()
+        _activeEngine.value?.pause()
     }
 
     fun resumeRace() {
-        activeEngine?.resume()
+        _activeEngine.value?.resume()
     }
 
     fun restartRace() {
         lastRaceReward.value = null
         val tr = selectedTrack.value ?: return
         val b = selectedBikeStats.value ?: return
-        startRace(tr, b, laps = activeEngine?.totalLaps ?: 3, mode = activeEngine?.mode ?: RaceMode.QUICK_RACE)
+        startRace(tr, b, laps = _activeEngine.value?.totalLaps ?: 3, mode = _activeEngine.value?.mode ?: RaceMode.QUICK_RACE)
     }
 
     fun updateSettings(newSettings: GameSettings) {

@@ -68,5 +68,8 @@ val CarbonCard = GalaxyCard
 val CarbonCardBorder = GalaxyCardBorder
 val CarbonSurface = GalaxySurface
 val CarbonSurfaceHighlight = GalaxySurfaceHighlight
+val CarbonCardSelected = GalaxySurfaceHighlight
+val NeonPink = GalaxyPink
+val NeonYellow = GalaxyGold
 
 

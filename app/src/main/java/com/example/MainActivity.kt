@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
@@ -28,6 +29,7 @@ object NavigationRoutes {
     const val GARAGE = "garage"
     const val RACE = "race"
     const val RACE_RESULTS = "race_results"
+    const val REPLAY = "replay"
     const val CHAMPIONSHIP = "championship"
     const val TIME_TRIAL = "time_trial"
     const val PRACTICE = "practice"
@@ -59,6 +61,10 @@ class MainActivity : ComponentActivity() {
                 val championship by viewModel.championship.collectAsState()
                 val dailyChallenge by viewModel.dailyChallenge.collectAsState()
                 val lastRaceReward by viewModel.lastRaceReward.collectAsState()
+                val activeEngineState by viewModel.activeEngine.collectAsState()
+                val lastRecordedReplayState by viewModel.lastRecordedReplay.collectAsState()
+                val selectedTrackState by viewModel.selectedTrack.collectAsState()
+                val selectedBikeStatsState by viewModel.selectedBikeStats.collectAsState()
 
                 Box(
                     modifier = Modifier
@@ -120,18 +126,21 @@ class MainActivity : ComponentActivity() {
                         }
 
                         composable(NavigationRoutes.GARAGE) {
+                            val playerLivery by viewModel.playerLivery.collectAsState()
                             GarageScreen(
                                 player = player,
                                 bikes = bikes,
                                 onBack = { navController.popBackStack() },
                                 onSelectBike = { bikeId -> viewModel.selectBike(bikeId) },
                                 onUnlockBike = { bikeId -> viewModel.unlockBike(bikeId) {} },
-                                onUpgradeBike = { bikeId, type -> viewModel.upgradeBike(bikeId, type) {} }
+                                onUpgradeBike = { bikeId, type -> viewModel.upgradeBike(bikeId, type) {} },
+                                onSaveLivery = { bikeId, livery -> viewModel.saveBikeLivery(bikeId, livery) },
+                                initialLivery = playerLivery
                             )
                         }
 
                         composable(NavigationRoutes.RACE) {
-                            val activeEngine = viewModel.activeEngine
+                            val activeEngine = activeEngineState
                             if (activeEngine != null) {
                                 RaceScreen(
                                     engine = activeEngine,
@@ -151,12 +160,29 @@ class MainActivity : ComponentActivity() {
                                         viewModel.updatePlayerInput(steer, throttle, brake, nitro)
                                     }
                                 )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(CarbonDark),
+                                    contentAlignment = androidx.compose.ui.Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(color = com.example.ui.theme.NeonCyan)
+                                }
+                                LaunchedEffect(Unit) {
+                                    if (viewModel.activeEngine.value == null) {
+                                        navController.popBackStack()
+                                    }
+                                }
                             }
                         }
 
                         composable(NavigationRoutes.RACE_RESULTS) {
                             RaceResultsScreen(
                                 summary = lastRaceReward,
+                                onWatchReplay = {
+                                    navController.navigate(NavigationRoutes.REPLAY)
+                                },
                                 onRestartRace = {
                                     viewModel.restartRace()
                                     navController.navigate(NavigationRoutes.RACE) {
@@ -173,6 +199,15 @@ class MainActivity : ComponentActivity() {
                                         popUpTo(NavigationRoutes.HOME) { inclusive = true }
                                     }
                                 }
+                            )
+                        }
+
+                        composable(NavigationRoutes.REPLAY) {
+                            CinematicReplayScreen(
+                                replayFrames = lastRecordedReplayState,
+                                track = selectedTrackState,
+                                playerBike = selectedBikeStatsState,
+                                onBackToResults = { navController.popBackStack() }
                             )
                         }
 

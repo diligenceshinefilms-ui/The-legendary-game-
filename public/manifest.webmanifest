@@ -1,0 +1,26 @@
+{
+  "name": "Legend Racer",
+  "short_name": "LegendRacer",
+  "description": "High-octane arcade motorcycle and highway traffic racing game featuring oncoming traffic dodging, bike tuning garage, time trials, and championship career mode.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B0F19",
+  "theme_color": "#F59E0B",
+  "categories": ["games", "sports", "racing"],
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

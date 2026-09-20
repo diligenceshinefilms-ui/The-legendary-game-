@@ -17,7 +17,8 @@ class GameEngine(
     val playerBikeStats: EffectiveBikeStats,
     val totalLaps: Int = 999, // Continuous mode: race doesn't stop until user requests stop
     val mode: RaceMode = RaceMode.QUICK_RACE,
-    val audioManager: GameAudioManager? = null
+    val audioManager: GameAudioManager? = null,
+    val playerLivery: PlayerLivery? = null
 ) {
     val trackLayout: TrackLayout = TrackCatalog.getTrackLayout(track.id)
 
@@ -73,6 +74,12 @@ class GameEngine(
     private val _nearMissCombo = MutableStateFlow(0)
     val nearMissCombo: StateFlow<Int> = _nearMissCombo.asStateFlow()
 
+    private val _isDrafting = MutableStateFlow(false)
+    val isDrafting: StateFlow<Boolean> = _isDrafting.asStateFlow()
+
+    private val _draftIntensity = MutableStateFlow(0f)
+    val draftIntensity: StateFlow<Float> = _draftIntensity.asStateFlow()
+
     var activeBikeStats: EffectiveBikeStats = playerBikeStats
         private set
 
@@ -83,6 +90,13 @@ class GameEngine(
     private var currentLapStartTime = 0L
     private var lastNearMissTimestamp = 0L
     private var nearMissComboCount = 0
+
+    // 30-Second Rolling Input & Telemetry Buffer for Post-Race Replay
+    private val recordedReplayFrames = ArrayDeque<ReplayFrame>()
+
+    fun getRecordedReplayFrames(): List<ReplayFrame> = synchronized(recordedReplayFrames) {
+        recordedReplayFrames.toList()
+    }
 
     var playerInput = BikeInput()
 
@@ -104,36 +118,45 @@ class GameEngine(
 
     private fun initializeObstacles() {
         val list = mutableListOf<HighwayObstacle>()
-        val lanes = listOf(-0.72f, -0.44f, -0.16f, 0.16f, 0.44f, 0.72f)
+        val oncomingLanes = listOf(-0.72f, -0.44f, -0.16f)
+        val sameDirLanes = listOf(0.16f, 0.44f, 0.72f)
+        val allLanes = listOf(-0.72f, -0.44f, -0.16f, 0.16f, 0.44f, 0.72f)
         val colors = listOf(
             0xFFFFD600L, 0xFF00E5FFL, 0xFFFF1744L, 0xFF7C4DFFL,
             0xFF00E676L, 0xFFFF9100L, 0xFFECEFF1L, 0xFF37474FL,
             0xFFE91E63L, 0xFF00B0FFL, 0xFFFF6D00L, 0xFF76FF03L
         )
         
-        // Spawn 28 varied vehicles across 6 multi-traffic highway lanes
-        for (i in 0 until 28) {
-            val dist = 100f + (i * 95f)
-            val lane = lanes[i % lanes.size]
+        // Spawn 32 varied vehicles across oncoming and forward highway lanes
+        for (i in 0 until 32) {
+            val dist = 90f + (i * 85f)
+            // Approximately 40% of vehicles are oncoming in the opposite direction on the left highway lanes
+            val isOncoming = (i % 5 == 0 || i % 5 == 2) && (i % 9 != 7)
+            val lane = if (isOncoming) {
+                oncomingLanes[i % oncomingLanes.size]
+            } else {
+                if (i % 9 == 7) 0f else sameDirLanes[i % sameDirLanes.size]
+            }
+
             val type = when (i % 9) {
-                0 -> ObstacleType.TWO_WHEELER
-                1 -> ObstacleType.FOUR_WHEELER
+                0 -> ObstacleType.FOUR_WHEELER
+                1 -> ObstacleType.TWO_WHEELER
                 2 -> ObstacleType.TRUCK
                 3 -> ObstacleType.TEMPO
                 4 -> ObstacleType.TRAFFIC_TAXI
                 5 -> ObstacleType.TRAFFIC_CAR
-                6 -> ObstacleType.TWO_WHEELER
-                7 -> if (i % 18 == 7) ObstacleType.TRAIN_CROSSING else ObstacleType.FOUR_WHEELER
+                6 -> ObstacleType.FOUR_WHEELER
+                7 -> if (i % 18 == 7) ObstacleType.TRAIN_CROSSING else ObstacleType.TRUCK
                 else -> ObstacleType.ROAD_CONE
             }
             
             val speed = when (type) {
-                ObstacleType.TWO_WHEELER -> 80f + ((i % 3) * 12f)
-                ObstacleType.FOUR_WHEELER -> 115f + ((i % 3) * 15f)
-                ObstacleType.TRAFFIC_CAR -> 110f + ((i % 2) * 15f)
-                ObstacleType.TRAFFIC_TAXI -> 105f + ((i % 2) * 12f)
-                ObstacleType.TRUCK -> 75f + ((i % 2) * 10f)
-                ObstacleType.TEMPO -> 65f + ((i % 2) * 10f)
+                ObstacleType.TWO_WHEELER -> 75f + ((i % 3) * 12f)
+                ObstacleType.FOUR_WHEELER -> 110f + ((i % 3) * 15f)
+                ObstacleType.TRAFFIC_CAR -> 105f + ((i % 2) * 15f)
+                ObstacleType.TRAFFIC_TAXI -> 100f + ((i % 2) * 12f)
+                ObstacleType.TRUCK -> 70f + ((i % 2) * 10f)
+                ObstacleType.TEMPO -> 60f + ((i % 2) * 10f)
                 ObstacleType.TRAIN_CROSSING, ObstacleType.ROAD_CONE, ObstacleType.BARRIER, ObstacleType.OIL_SPILL, ObstacleType.DEBRIS -> 0f
             }
 
@@ -145,7 +168,8 @@ class GameEngine(
                     distanceMeters = dist,
                     speedKmh = speed,
                     primaryColorHex = colors[i % colors.size],
-                    vehicleSubModel = i % 3
+                    vehicleSubModel = i % 3,
+                    isOncoming = isOncoming
                 )
             )
         }
@@ -172,6 +196,13 @@ class GameEngine(
         )
 
         // Player starting dead center on highway lane
+        val pColor = playerLivery?.primaryColorHex ?: playerBikeStats.bike.primaryColorHex
+        val sColor = playerLivery?.secondaryColorHex ?: playerBikeStats.bike.secondaryColorHex
+        val uColor = playerLivery?.underglowColorHex ?: pColor
+        val num = playerLivery?.racingNumber ?: "46"
+        val decal = playerLivery?.vinylAccentStyle?.name ?: "CYBER_FLAMES"
+        val rimTape = playerLivery?.rimTapeColorHex ?: pColor
+
         grid.add(
             RacerState(
                 id = "player",
@@ -181,8 +212,12 @@ class GameEngine(
                 posY = 0.0f,
                 totalRaceDistance = 0.0f,
                 angleRad = startAngle,
-                primaryColorHex = playerBikeStats.bike.primaryColorHex,
-                secondaryColorHex = playerBikeStats.bike.secondaryColorHex,
+                primaryColorHex = pColor,
+                secondaryColorHex = sColor,
+                underglowColorHex = uColor,
+                racingNumber = num,
+                vinylAccentStyle = decal,
+                rimTapeColorHex = rimTape,
                 bikeName = playerBikeStats.bike.name
             )
         )
@@ -269,10 +304,64 @@ class GameEngine(
                 _nitroFuel.value = (_nitroFuel.value + 4f * dt).coerceAtMost(100f)
             }
 
+            // 1.1 Compute Dynamic Slipstream Vacuum Drafting Force
+            var maxDraftIntensity = 0f
+            if (playerRacer != null && playerRacer.speedKmh > 50f) {
+                val pDist = playerRacer.totalRaceDistance
+                val pLane = playerRacer.posX
+
+                // Check lead traffic obstacles within 4m to 32m ahead
+                for (obs in _obstacles.value) {
+                    if (obs.isHit) continue
+                    val longDiff = obs.distanceMeters - pDist
+                    val latDiff = abs(pLane - obs.lane)
+                    if (longDiff in 4.0f..32.0f && latDiff <= 0.18f) {
+                        val proximityFactor = ((32.0f - longDiff) / (32.0f - 4.0f)).coerceIn(0f, 1f)
+                        val alignFactor = (1.0f - (latDiff / 0.18f)).coerceIn(0f, 1f)
+                        val intensity = proximityFactor * alignFactor
+                        if (intensity > maxDraftIntensity) {
+                            maxDraftIntensity = intensity
+                        }
+                    }
+                }
+
+                // Check lead opponent racers within 4m to 34m ahead
+                for (opp in currentRacers.filter { !it.isPlayer && it.finishedTimeMs == null }) {
+                    val longDiff = opp.totalRaceDistance - pDist
+                    val latDiff = abs(pLane - opp.posX)
+                    if (longDiff in 4.0f..34.0f && latDiff <= 0.18f) {
+                        val proximityFactor = ((34.0f - longDiff) / (34.0f - 4.0f)).coerceIn(0f, 1f)
+                        val alignFactor = (1.0f - (latDiff / 0.18f)).coerceIn(0f, 1f)
+                        val intensity = proximityFactor * alignFactor
+                        if (intensity > maxDraftIntensity) {
+                            maxDraftIntensity = intensity
+                        }
+                    }
+                }
+            }
+
+            val wasDrafting = _isDrafting.value
+            if (maxDraftIntensity > 0.05f) {
+                if (!wasDrafting) {
+                    audioManager?.playDraftingLockOn()
+                }
+                _isDrafting.value = true
+                _draftIntensity.value = maxDraftIntensity
+                // Suction vacuum acceleration boost and aerodynamic nitro recovery
+                val draftSpeedBoost = 18f * maxDraftIntensity * dt
+                _playerSpeedKmh.value = (_playerSpeedKmh.value + draftSpeedBoost).coerceAtMost(playerBikeStats.topSpeedKmh * 1.12f)
+                _nitroFuel.value = (_nitroFuel.value + (14f * maxDraftIntensity * dt)).coerceAtMost(100f)
+            } else {
+                _isDrafting.value = false
+                _draftIntensity.value = 0f
+            }
+
             // 2. Physics & AI updates for all racers
             val basePlayerSpeed = _playerSpeedKmh.value
             val effectivePlayerSpeed = if (isNitroEngaged) {
                 (basePlayerSpeed + 35f).coerceAtMost(playerBikeStats.topSpeedKmh * playerBikeStats.nitroMultiplier)
+            } else if (_isDrafting.value) {
+                (basePlayerSpeed + (16f * _draftIntensity.value)).coerceAtMost(playerBikeStats.topSpeedKmh * 1.12f)
             } else {
                 basePlayerSpeed
             }
@@ -288,6 +377,27 @@ class GameEngine(
                         isNitroActive = isNitroEngaged
                     )
                     val updated = BikePhysics.updateRacer(playerToUpdate, inputWithNitro, playerBikeStats, trackLayout, dt)
+
+                    // Record frame for 30-second post-race playback
+                    val currentMs = System.currentTimeMillis()
+                    synchronized(recordedReplayFrames) {
+                        recordedReplayFrames.add(
+                            ReplayFrame(
+                                timestampMs = currentMs,
+                                steer = inputWithNitro.steer,
+                                throttle = inputWithNitro.throttle,
+                                brake = inputWithNitro.brake,
+                                nitro = isNitroEngaged,
+                                posX = updated.posX,
+                                totalRaceDistance = updated.totalRaceDistance,
+                                speedKmh = updated.speedKmh,
+                                leanAngleRad = updated.leanAngleRad
+                            )
+                        )
+                        while (recordedReplayFrames.isNotEmpty() && (currentMs - recordedReplayFrames.first().timestampMs > 30_000L)) {
+                            recordedReplayFrames.removeFirst()
+                        }
+                    }
 
                     // Track Top Speed and Total Distance
                     if (updated.speedKmh > _topSpeedKmh.value) {
@@ -306,6 +416,10 @@ class GameEngine(
                         isNitro = isNitroEngaged,
                         isRedlining = telemetry.isRedlining
                     )
+
+                    if (telemetry.isRedlining) {
+                        audioManager?.triggerRedlineHaptic()
+                    }
 
                     updated
                 } else {
@@ -348,7 +462,13 @@ class GameEngine(
                         }
                         obs.copy(distanceMeters = newDist, trainProgress = newProgress)
                     } else {
-                        var newDist = obs.distanceMeters + ((obs.speedKmh * 1000f / 3600f) * dt)
+                        var newDist = if (obs.isOncoming) {
+                            // Oncoming traffic travels in the opposite direction towards the player
+                            obs.distanceMeters - ((obs.speedKmh * 1000f / 3600f) * dt)
+                        } else {
+                            // Forward traffic travels along with the player
+                            obs.distanceMeters + ((obs.speedKmh * 1000f / 3600f) * dt)
+                        }
                         var newIsHit = obs.isHit
                         var newLane = obs.lane
                         // If honked at, smoothly steer toward outer road shoulder
@@ -358,8 +478,15 @@ class GameEngine(
                         }
                         // Dynamic Highway Traffic Recycling: Perpetual stream of traffic ahead
                         if (newDist < pRacer!!.totalRaceDistance - 50f) {
-                            newDist = pRacer!!.totalRaceDistance + 220f + (kotlin.random.Random.nextFloat() * 200f)
-                            newLane = highwayLanes[kotlin.random.Random.nextInt(highwayLanes.size)]
+                            if (obs.isOncoming) {
+                                newDist = pRacer!!.totalRaceDistance + 280f + (kotlin.random.Random.nextFloat() * 240f)
+                                val oncomingLanes = listOf(-0.72f, -0.44f, -0.16f)
+                                newLane = oncomingLanes[kotlin.random.Random.nextInt(oncomingLanes.size)]
+                            } else {
+                                newDist = pRacer!!.totalRaceDistance + 220f + (kotlin.random.Random.nextFloat() * 200f)
+                                val sameDirLanes = listOf(0.16f, 0.44f, 0.72f)
+                                newLane = sameDirLanes[kotlin.random.Random.nextInt(sameDirLanes.size)]
+                            }
                             newIsHit = false // Reset when wrapping around
                         }
                         obs.copy(distanceMeters = newDist, isHit = newIsHit, lane = newLane)
@@ -387,7 +514,7 @@ class GameEngine(
                         }
                     } else {
                         // Dynamic Close-Call Overtaking & Lane-Splitting Detection
-                        if (longDiff < 4.8f && latDiff in 0.10f..0.32f && pRacer!!.speedKmh > 55f && now - lastNearMissTimestamp > 450L) {
+                        if (longDiff < 4.8f && latDiff in 0.10f..0.32f && pRacer!!.speedKmh > 45f && now - lastNearMissTimestamp > 400L) {
                             lastNearMissTimestamp = now
                             // Check if player is threading between two traffic vehicles in adjacent lanes (Lane-Splitting)
                             val isLaneSplit = updatedObs.any { other ->
@@ -397,48 +524,77 @@ class GameEngine(
                                 ((playerLatPos - obs.lane) * (playerLatPos - other.lane) < 0f)
                             }
 
-                            if (isLaneSplit) {
+                            val vehicleLabel = when (obs.type) {
+                                ObstacleType.TWO_WHEELER -> "TWO WHEELER"
+                                ObstacleType.TRUCK -> "HEAVY TRUCK"
+                                ObstacleType.TEMPO -> "TEMPO"
+                                ObstacleType.TRAFFIC_TAXI -> "TAXI"
+                                else -> "TRAFFIC"
+                            }
+
+                            if (obs.isOncoming) {
+                                nearMissComboCount = (nearMissComboCount + 2).coerceAtMost(30)
+                                _nearMissBonus.value = "⚡ DARING ONCOMING PASS: $vehicleLabel! COMBO x$nearMissComboCount (+180)"
+                                _nitroFuel.value = (_nitroFuel.value + 24f).coerceAtMost(100f)
+                            } else if (isLaneSplit) {
                                 nearMissComboCount = (nearMissComboCount + 2).coerceAtMost(25)
                                 _nearMissBonus.value = "🔥 SPLIT-SECOND DOUBLE OVERTAKE! COMBO x$nearMissComboCount (+250)"
                                 _nitroFuel.value = (_nitroFuel.value + 28f).coerceAtMost(100f)
                             } else {
                                 nearMissComboCount = (nearMissComboCount + 1).coerceAtMost(25)
-                                val vehicleLabel = when (obs.type) {
-                                    ObstacleType.TWO_WHEELER -> "TWO WHEELER"
-                                    ObstacleType.TRUCK -> "HEAVY TRUCK"
-                                    ObstacleType.TEMPO -> "TEMPO"
-                                    ObstacleType.TRAFFIC_TAXI -> "TAXI"
-                                    else -> "TRAFFIC"
-                                }
                                 _nearMissBonus.value = "⚡ CLOSE CALL PASS: $vehicleLabel! COMBO x$nearMissComboCount (+100)"
                                 _nitroFuel.value = (_nitroFuel.value + 16f).coerceAtMost(100f)
                             }
                             _nearMissCombo.value = nearMissComboCount
-                            audioManager?.playCheckpoint()
+                            audioManager?.playNearMissOvertake(isDoubleSplit = isLaneSplit || obs.isOncoming)
                         }
 
-                        // Physical collision detection with precise lane geometry
-                        val collisionRadiusLong = if (obs.type == ObstacleType.TRUCK) 8.5f else 5.2f
-                        val collisionRadiusLat = if (obs.type == ObstacleType.TRUCK) 0.22f else 0.17f
+                        // Physical collision detection with enlarged vehicle hitboxes
+                        val collisionRadiusLong = when (obs.type) {
+                            ObstacleType.TRUCK -> 9.8f
+                            ObstacleType.FOUR_WHEELER, ObstacleType.TRAFFIC_CAR, ObstacleType.TRAFFIC_TAXI -> 6.6f
+                            ObstacleType.TEMPO -> 5.8f
+                            ObstacleType.TWO_WHEELER -> 4.8f
+                            ObstacleType.BARRIER -> 4.5f
+                            ObstacleType.ROAD_CONE -> 3.5f
+                            else -> 5.5f
+                        }
+                        val collisionRadiusLat = when (obs.type) {
+                            ObstacleType.TRUCK -> 0.28f
+                            ObstacleType.FOUR_WHEELER, ObstacleType.TRAFFIC_CAR, ObstacleType.TRAFFIC_TAXI -> 0.24f
+                            ObstacleType.TEMPO -> 0.21f
+                            ObstacleType.TWO_WHEELER -> 0.17f
+                            ObstacleType.BARRIER -> 0.32f
+                            ObstacleType.ROAD_CONE -> 0.18f
+                            else -> 0.20f
+                        }
 
-                        if (longDiff < collisionRadiusLong && latDiff < collisionRadiusLat && pRacer!!.speedKmh > 20f) {
+                        if (longDiff < collisionRadiusLong && latDiff < collisionRadiusLat && pRacer!!.speedKmh > 10f) {
                             if (obs.type == ObstacleType.OIL_SPILL) {
                                 pRacer = pRacer!!.copy(speedKmh = (pRacer!!.speedKmh * 0.70f).coerceAtLeast(0f))
+                                audioManager?.playCollision(isScrape = true)
                                 hitObstacleIds.add(obs.id)
                             } else if (obs.type == ObstacleType.DEBRIS) {
                                 pRacer = pRacer!!.copy(speedKmh = (pRacer!!.speedKmh * 0.40f).coerceAtLeast(0f))
-                                audioManager?.playCrash()
+                                audioManager?.playCollision(isScrape = true)
                                 hitObstacleIds.add(obs.id)
                             } else {
                                 val typeName = when (obs.type) {
                                     ObstacleType.TWO_WHEELER -> "TWO-WHEELER COMMUTER"
-                                    ObstacleType.TRUCK -> "18-WHEELER HEAVY TRUCK"
+                                    ObstacleType.TRUCK -> "18-WHEELER FREIGHT TRUCK"
                                     ObstacleType.TEMPO -> "DELIVERY TEMPO"
-                                    ObstacleType.FOUR_WHEELER -> "SEDAN CAR"
+                                    ObstacleType.FOUR_WHEELER, ObstacleType.TRAFFIC_CAR -> "HIGHWAY VEHICLE"
                                     ObstacleType.TRAFFIC_TAXI -> "CITY TAXI"
+                                    ObstacleType.BARRIER -> "ROADWORK BARRIER"
+                                    ObstacleType.ROAD_CONE -> "TRAFFIC SAFETY PYLON"
                                     else -> obs.type.name.replace("_", " ")
                                 }
-                                _missionFailReason.value = "CRITICAL COLLISION: HIT $typeName AT ${pRacer!!.speedKmh.toInt()} KM/H!"
+                                if (obs.isOncoming) {
+                                    val combinedSpeed = (pRacer!!.speedKmh + obs.speedKmh).toInt()
+                                    _missionFailReason.value = "HEAD-ON COLLISION: IMPACT WITH ONCOMING $typeName AT $combinedSpeed KM/H COMBINED VELOCITY!"
+                                } else {
+                                    _missionFailReason.value = "CRITICAL COLLISION: HIT $typeName AT ${pRacer!!.speedKmh.toInt()} KM/H!"
+                                }
                                 _engineState.value = GameEngineState.MISSION_FAILED
                                 audioManager?.playCrash()
                                 audioManager?.stopEngineAudio()
@@ -457,7 +613,7 @@ class GameEngine(
                 updatedRacers = updatedRacers.map { if (it.isPlayer) pRacer!! else it }
 
                 // B. Check Roadside Barrier & Guardrails / Trees / Buildings
-                if (abs(playerLatPos) > 0.96f && pRacer!!.speedKmh > 40f) {
+                if (abs(playerLatPos) > 0.96f && pRacer!!.speedKmh > 25f) {
                     _missionFailReason.value = "CRITICAL IMPACT: CRASHED INTO ROADSIDE BARRIER & STRUCTURES AT ${pRacer!!.speedKmh.toInt()} KM/H!"
                     _engineState.value = GameEngineState.MISSION_FAILED
                     audioManager?.playCrash()
@@ -465,11 +621,12 @@ class GameEngine(
                     return
                 }
 
-                // C. Check High-Speed Racer Collision
-                for (opp in updatedRacers.filter { !it.isPlayer }) {
-                    val dist = Vector2D(pRacer!!.posX, pRacer!!.posY).distanceTo(Vector2D(opp.posX, opp.posY))
-                    if (dist < 24f && pRacer!!.speedKmh > 80f && abs(pRacer!!.speedKmh - opp.speedKmh) > 35f) {
-                        _missionFailReason.value = "HIGH SPEED IMPACT WITH OPPONENT RACER ${opp.name}!"
+                // C. Check High-Speed Racer & Opponent Vehicle Collision
+                for (opp in updatedRacers.filter { !it.isPlayer && it.finishedTimeMs == null }) {
+                    val oppLongDiff = abs(pRacer!!.totalRaceDistance - opp.totalRaceDistance)
+                    val oppLatDiff = abs(pRacer!!.posX - opp.posX)
+                    if (oppLongDiff < 5.0f && oppLatDiff < 0.22f && pRacer!!.speedKmh > 15f) {
+                        _missionFailReason.value = "CRITICAL COLLISION: IMPACT WITH RIVAL RACER ${opp.name} AT ${pRacer!!.speedKmh.toInt()} KM/H!"
                         _engineState.value = GameEngineState.MISSION_FAILED
                         audioManager?.playCrash()
                         audioManager?.stopEngineAudio()
@@ -589,8 +746,12 @@ class GameEngine(
             if (racer.isPlayer) {
                 racer.copy(
                     bikeName = newStats.bike.name,
-                    primaryColorHex = newStats.bike.primaryColorHex,
-                    secondaryColorHex = newStats.bike.secondaryColorHex
+                    primaryColorHex = playerLivery?.primaryColorHex ?: newStats.bike.primaryColorHex,
+                    secondaryColorHex = playerLivery?.secondaryColorHex ?: newStats.bike.secondaryColorHex,
+                    underglowColorHex = playerLivery?.underglowColorHex ?: newStats.bike.primaryColorHex,
+                    racingNumber = playerLivery?.racingNumber ?: "46",
+                    vinylAccentStyle = playerLivery?.vinylAccentStyle?.name ?: "CYBER_FLAMES",
+                    rimTapeColorHex = playerLivery?.rimTapeColorHex ?: newStats.bike.primaryColorHex
                 )
             } else {
                 racer
@@ -599,6 +760,26 @@ class GameEngine(
         // Clamp current speed if it exceeds new bike top speed
         if (_playerSpeedKmh.value > newStats.topSpeedKmh) {
             setPlayerSpeed(newStats.topSpeedKmh)
+        }
+    }
+
+    /**
+     * Updates player livery in real-time.
+     */
+    fun updatePlayerLivery(livery: PlayerLivery) {
+        _racers.value = _racers.value.map { racer ->
+            if (racer.isPlayer) {
+                racer.copy(
+                    primaryColorHex = livery.primaryColorHex,
+                    secondaryColorHex = livery.secondaryColorHex,
+                    underglowColorHex = livery.underglowColorHex,
+                    racingNumber = livery.racingNumber,
+                    vinylAccentStyle = livery.vinylAccentStyle.name,
+                    rimTapeColorHex = livery.rimTapeColorHex
+                )
+            } else {
+                racer
+            }
         }
     }
 

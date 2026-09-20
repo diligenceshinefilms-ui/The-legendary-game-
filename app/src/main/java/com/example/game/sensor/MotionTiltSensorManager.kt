@@ -5,6 +5,9 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Build
+import android.view.Surface
+import android.view.WindowManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,7 +27,7 @@ data class TiltSensorReading(
  * Tilting phone down on the right side -> steer right (+1.0)
  * Tilting phone down on the left side -> steer left (-1.0)
  */
-class MotionTiltSensorManager(context: Context) : SensorEventListener {
+class MotionTiltSensorManager(private val context: Context) : SensorEventListener {
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
 
     // Prioritize Game Rotation Vector / Rotation Vector for smooth gyroscope/accelerometer fusion
@@ -49,7 +52,22 @@ class MotionTiltSensorManager(context: Context) : SensorEventListener {
     private val smoothingFactor = 0.75f
 
     private val rotationMatrix = FloatArray(9)
+    private val remappedMatrix = FloatArray(9)
     private val orientationAngles = FloatArray(3)
+
+    @Suppress("DEPRECATION")
+    private fun getDisplayRotation(): Int {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                context.display?.rotation ?: Surface.ROTATION_90
+            } else {
+                val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+                windowManager?.defaultDisplay?.rotation ?: Surface.ROTATION_90
+            }
+        } catch (e: Exception) {
+            Surface.ROTATION_90
+        }
+    }
 
     fun startListening() {
         sensor?.let {
@@ -73,17 +91,37 @@ class MotionTiltSensorManager(context: Context) : SensorEventListener {
         calibrationOffset = 0f
     }
 
+    fun setManualTouchSteer(steer: Float) {
+        smoothedSteer = steer.coerceIn(-1f, 1f)
+        _tiltReading.value = TiltSensorReading(
+            steerValue = smoothedSteer,
+            rollDegrees = smoothedSteer * 20f,
+            isAvailable = true,
+            isCalibrated = true
+        )
+    }
+
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
 
         var rawRollDegrees = 0f
+        val rotation = getDisplayRotation()
 
         if (isRotationVectorSensor) {
             SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-            SensorManager.getOrientation(rotationMatrix, orientationAngles)
-            // In Android getOrientation:
-            // orientationAngles[2] is roll. Clockwise rotation (right side down) is negative radians in world frame.
-            // Negating it maps right side down to positive degrees (+), left side down to negative (-).
+
+            val (axisX, axisY) = when (rotation) {
+                Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
+                Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
+                Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
+                else -> SensorManager.AXIS_X to SensorManager.AXIS_Y
+            }
+
+            SensorManager.remapCoordinateSystem(rotationMatrix, axisX, axisY, remappedMatrix)
+            SensorManager.getOrientation(remappedMatrix, orientationAngles)
+
+            // Negate roll angle so tilting right side down gives positive (+) degrees (steers RIGHT)
+            // and tilting left side down gives negative (-) degrees (steers LEFT).
             val rollRad = -orientationAngles[2]
             rawRollDegrees = Math.toDegrees(rollRad.toDouble()).toFloat()
         } else {
@@ -92,11 +130,27 @@ class MotionTiltSensorManager(context: Context) : SensorEventListener {
             val rawY = event.values[1]
             val rawZ = event.values[2]
 
-            // In portrait mode:
-            // When right edge dips down: gravity pulls towards -X axis in screen coords -> -rawX is positive (+).
-            // When left edge dips down: gravity pulls towards +X axis -> -rawX is negative (-).
-            val denominator = sqrt((rawY * rawY + rawZ * rawZ).toDouble()).coerceAtLeast(0.5)
-            rawRollDegrees = (atan2(-rawX.toDouble(), denominator) * (180.0 / Math.PI)).toFloat()
+            rawRollDegrees = when (rotation) {
+                Surface.ROTATION_90 -> {
+                    // Landscape Left (top facing left): dipping right side down tilts +Y towards ground (+rawY)
+                    val denominator = sqrt((rawX * rawX + rawZ * rawZ).toDouble()).coerceAtLeast(0.5)
+                    (atan2(rawY.toDouble(), denominator) * (180.0 / Math.PI)).toFloat()
+                }
+                Surface.ROTATION_270 -> {
+                    // Landscape Right (top facing right): dipping right side down tilts -Y towards ground (-rawY)
+                    val denominator = sqrt((rawX * rawX + rawZ * rawZ).toDouble()).coerceAtLeast(0.5)
+                    (atan2(-rawY.toDouble(), denominator) * (180.0 / Math.PI)).toFloat()
+                }
+                Surface.ROTATION_180 -> {
+                    val denominator = sqrt((rawY * rawY + rawZ * rawZ).toDouble()).coerceAtLeast(0.5)
+                    (atan2(rawX.toDouble(), denominator) * (180.0 / Math.PI)).toFloat()
+                }
+                else -> { // Portrait
+                    // Dipping right side down pushes gravity towards -X
+                    val denominator = sqrt((rawY * rawY + rawZ * rawZ).toDouble()).coerceAtLeast(0.5)
+                    (atan2(-rawX.toDouble(), denominator) * (180.0 / Math.PI)).toFloat()
+                }
+            }
         }
 
         // Apply calibration offset

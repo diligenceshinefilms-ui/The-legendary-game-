@@ -14,6 +14,7 @@ class GameAudioManager(private val context: Context) {
     private var vibrator: Vibrator? = null
     private var isVibrationEnabled: Boolean = true
     private var sfxVolume: Float = 1.0f
+    private var lastRedlineHapticTimestamp: Long = 0L
 
     // Real-time procedural motorcycle engine sound synthesizer
     val engineSynthesizer = MotorcycleEngineSoundSynthesizer()
@@ -123,24 +124,82 @@ class GameAudioManager(private val context: Context) {
         }
     }
 
-    fun playCollision() {
-        if (sfxVolume <= 0.05f) return
-        try {
-            toneGenerator?.startTone(ToneGenerator.TONE_PROP_NACK, 150)
-            vibrate(120)
-        } catch (e: Exception) {
-            // Ignore
+    /**
+     * Dynamic close-call overtakes and high-speed lane-splitting audio & haptic feedback
+     */
+    fun playNearMissOvertake(isDoubleSplit: Boolean = false) {
+        if (sfxVolume > 0.05f) {
+            try {
+                if (isDoubleSplit) {
+                    toneGenerator?.startTone(ToneGenerator.TONE_DTMF_A, 220)
+                } else {
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_PROMPT, 130)
+                }
+            } catch (e: Exception) {
+                // Ignore tone error
+            }
+        }
+        if (isDoubleSplit) {
+            // Crisp dual-pulse tactile feedback for double lane-splitting
+            vibrateWaveform(longArrayOf(0, 35, 30, 60))
+        } else {
+            vibrate(40)
+        }
+    }
+
+    /**
+     * Slipstream aerodynamic lock-on tone and haptic tap
+     */
+    fun playDraftingLockOn() {
+        if (sfxVolume > 0.05f) {
+            try {
+                toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP2, 90)
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        vibrate(28)
+    }
+
+    /**
+     * High RPM rev-limiter handlebar vibration flutter
+     */
+    fun triggerRedlineHaptic() {
+        val now = System.currentTimeMillis()
+        if (now - lastRedlineHapticTimestamp > 120L) {
+            lastRedlineHapticTimestamp = now
+            vibrate(20)
+        }
+    }
+
+    fun playCollision(isScrape: Boolean = false) {
+        if (sfxVolume > 0.05f) {
+            try {
+                if (isScrape) {
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_NACK, 90)
+                } else {
+                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_NACK, 180)
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+        if (isScrape) {
+            vibrate(55)
+        } else {
+            vibrate(140)
         }
     }
 
     fun playCrash() {
-        if (sfxVolume <= 0.05f) return
-        try {
-            toneGenerator?.startTone(ToneGenerator.TONE_SUP_ERROR, 500)
-            vibrate(400)
-        } catch (e: Exception) {
-            // Ignore
+        if (sfxVolume > 0.05f) {
+            try {
+                toneGenerator?.startTone(ToneGenerator.TONE_SUP_ERROR, 500)
+            } catch (e: Exception) {
+                // Ignore
+            }
         }
+        vibrateWaveform(longArrayOf(0, 140, 50, 280))
     }
 
     fun playVictory() {
@@ -160,6 +219,24 @@ class GameAudioManager(private val context: Context) {
             vibrate(15)
         } catch (e: Exception) {
             // Ignore
+        }
+    }
+
+    fun vibrateWaveform(timings: LongArray, amplitudes: IntArray? = null) {
+        if (!isVibrationEnabled || vibrator == null || !vibrator!!.hasVibrator()) return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (amplitudes != null && amplitudes.size == timings.size) {
+                    vibrator?.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                } else {
+                    vibrator?.vibrate(VibrationEffect.createWaveform(timings, -1))
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(timings, -1)
+            }
+        } catch (e: Exception) {
+            // Ignore vibration failure
         }
     }
 
